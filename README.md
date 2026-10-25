@@ -1,43 +1,60 @@
-# Invoices & customers — a Ledger module
+# Sales — a Ledger module
 
-A module for [Ledger](https://github.com/mastifdogo/Bookeeping) that lets you:
+A module for [Ledger](https://github.com/mastifdogo/Bookeeping). It appears
+in Ledger's sidebar as **Sales**, with a hammer icon, and lets you:
 
-- **write invoices**: line items with quantity, unit price and tax rate per line,
-  automatic numbering (`INV-0001`…), due dates from payment terms, drafts you
-  can edit, duplicate, issue, void
+- **write invoices** with line items, automatic numbering (`INV-0001`…), due
+  dates from payment terms, drafts you can edit, duplicate, issue or void
+- **write quotes and estimates**, each with its own numbering (`QUO-`, `EST-`)
+  and a "valid until" date. You can email them, mark them accepted or declined,
+  and turn one into an invoice with one click. Quotes are firm prices;
+  estimates carry an "approximate" disclaimer.
+- **charge GST and other sales taxes**. GST (5%) is set up and on by default.
+  HST, PST and QST are ready to switch on, and you can add your own. A line
+  can carry several taxes (e.g. GST + PST). Customers and categories can
+  have their own taxes (e.g. none for an exempt or US customer). Your GST/HST
+  registration number prints on every document.
+- **sort sales into categories** (Labour, Materials, …), each tracking to
+  a revenue account. The Categories page shows sales per category over any
+  date range.
 - **keep customer records**: contact details, billing address, Cc addresses,
-  currency, payment terms, private notes, outstanding balance and invoice history
-- **email invoices** as PDF attachments through your own mail account (SMTP:
-  Gmail, Microsoft 365, Fastmail, iCloud, Zoho or a local relay), with an
-  editable message and a log of every send
-- **record payments**, with partial payments and an overdue view
-- optionally **post to the books**: issuing an invoice posts
-  Dr receivable / Cr revenue + sales tax, a payment posts Dr bank / Cr
-  receivable, and voiding or removing a payment reverses its entry
+  currency, payment terms, taxes, notes, balance owing and every document
+  sent to them
+- **email PDFs** through your own mail account (SMTP: Gmail, Microsoft 365,
+  Fastmail, iCloud, Zoho or a local relay), with editable messages and a
+  log of every send
+- **record payments**, including partial payments, and see what's overdue
+- optionally **post to the books**: issuing an invoice posts Dr receivable,
+  Cr each line's category revenue account and Cr each tax's payable account.
+  A payment posts Dr bank / Cr receivable. Voiding an invoice or removing a
+  payment reverses its entry. Quotes and estimates are never posted.
 
-It has no dependencies (PDF and SMTP are built in), so Ledger installs it as-is.
+It has no dependencies (the PDF writer and the email client are built in),
+so Ledger installs it as-is.
 
 ## Install
 
-On Ledger's **Modules** page, enter `mastifdogo/invoice-costumer-module` and
-install. Ledger installs the latest GitHub Release, creates the module's
-database schema (`mod_invoices`) and adds **Invoices** to the sidebar.
-Needs Ledger 0.6.0 or newer.
+Needs **Ledger 0.7.0 or newer** (for the sidebar icon). On Ledger's
+**Modules** page, enter `mastifdogo/invoice-costumer-module` and install.
+Ledger installs the latest GitHub Release, creates the module's database
+schema (`mod_sales`) and adds **Sales** to the sidebar.
 
 ## Set up
 
-Open **Invoices → Settings**:
+Open **Sales → Settings**:
 
-1. **Your business**: name, address, tax number and footer appear on every invoice.
-2. **Invoices**: number prefix and next number, default currency, payment
-   terms, tax rate and tax name (e.g. `HST`, 13).
-3. **Ledger posting** (optional): tick *Post invoices and payments to the
-   books* and choose, for each currency you bill in, the receivable, revenue,
-   sales-tax and bank accounts. Create them under **Accounts** in Ledger first
-   (e.g. `1200 Accounts receivable` asset, `4000 Revenue`, `2200 HST payable`
-   liability, `1000 Bank` asset).
-4. **Email**: pick your provider to fill in the server, then enter your
-   username, password and sender address, save, and press **Send a test email**.
+1. **Your business**: name, address, GST/HST registration number and footer.
+2. **Taxes**: GST is on. Click **Edit** on each tax you collect, turn it on
+   and choose the account it's owed to (e.g. `2200 GST/HST payable`). The
+   chips under the table choose which taxes new lines get by default.
+3. **Numbering and defaults**: prefixes and next numbers for invoices,
+   quotes and estimates; payment terms; how long quotes and estimates stay
+   valid; the terms printed on quotes and estimates.
+4. **Ledger posting** (optional): turn on *Post invoices and payments to the
+   books* and choose the receivable, default revenue and bank accounts for
+   each currency. Create the accounts under **Accounts** in Ledger first.
+5. **Email**: pick your provider, enter username, password and sender
+   address, save, and press **Send a test email**.
 
    | Provider | Server | Port / security | Password |
    |---|---|---|---|
@@ -50,49 +67,64 @@ Open **Invoices → Settings**:
    The container needs outbound access to that port. The password is stored
    in the module's database table and never sent back to the browser.
 
+Then, under **Categories**, add your sales categories and the revenue
+account each goes to. Lines without a category use the default revenue
+account.
+
 ## Using it
 
-- **Customers → + New customer**, then **+ New invoice** from the customer.
-- **Save draft** keeps it editable; **Save & issue** locks it (and posts it
-  when ledger posting is on).
-- **Email** sends the PDF to the customer's address (plus Cc addresses);
-  emailing a draft issues it first. The message template and placeholders
-  (`{{number}}`, `{{customer}}`, `{{total}}`, `{{due_date}}`…) are in Settings.
-- **Record payment** for full or partial payments; the invoice becomes *paid*
-  when the balance reaches zero.
-- **Void** an issued invoice with no payments (remove payments first). Drafts
-  can simply be deleted.
-- **Download PDF** at any time.
+- **Customers → + Invoice / + Quote / + Estimate** starts a document for that customer.
+- On each line, pick a category; its taxes fill in (category's, else the
+  customer's, else the defaults). Click the tax chips to change them.
+- **Invoices**: *Save draft* keeps it editable. *Save & issue* locks it and
+  posts it when posting is on. *Email* sends the PDF; emailing a draft issues
+  it first. Use *Record payment* for payments and *Void* to cancel.
+- **Quotes and estimates**: *Email* (or *Mark as sent*), then *Accepted* or
+  *Declined*. *Convert to invoice* creates a draft invoice with the same
+  lines and tax rates, linked both ways. Sent quotes stay editable until
+  they're decided.
+- Saved documents keep the tax rates they were written with, so changing a
+  rate later only affects new lines.
 
-Money is kept as integer cents and tax is computed per rate on the sum of the
-lines at that rate, rounded half away from zero.
+Money is kept as integer cents. Each tax is computed once on the lines it
+applies to and rounded half away from zero.
 
 ## API
 
-Everything the page does is available under `/api/v1/m/invoices` with a Ledger
-login: `customers`, `invoices` (plus `/:id/issue`, `/:id/send`, `/:id/pdf`,
-`/:id/payments`, `/:id/void`, `/:id/duplicate`), `settings`,
-`settings/test-email`, `summary`. See `server.mjs`.
+Everything the page does is available under `/api/v1/m/sales` with a Ledger
+login:
+
+- `invoices`, `quotes`, `estimates`: list, create, read, update, delete, plus
+  `/:id/pdf`, `/:id/send`, `/:id/duplicate`
+- invoices also have `/:id/issue`, `/:id/void` and `/:id/payments`
+- quotes and estimates also have `/:id/mark-sent`, `/:id/accept`,
+  `/:id/decline`, `/:id/reopen` and `/:id/convert`
+- `customers`, `categories`, `taxes`, `settings`, `settings/test-email`, `summary`
 
 ## Development
 
 ```
-ledger-module.json     manifest
-server.mjs             API routes (register(ctx))
-lib/money.mjs          exact money/tax arithmetic
-lib/pdf.mjs            PDF writer and invoice layout
-lib/mail.mjs           SMTP client (TLS, STARTTLS, AUTH PLAIN/LOGIN) and MIME builder
-migrations/            database schema (runs once per file, never edit a released one)
-ui/                    the page shown inside Ledger (plain HTML/JS, no build)
-test/                  unit tests: npm test
+ledger-module.json      manifest
+server.mjs              register(ctx): wires up the route files
+server/common.mjs       input validation, settings, shared helpers
+server/documents.mjs    invoices, quotes, estimates (lines, posting, PDF, email)
+server/catalog.mjs      taxes and categories
+server/customers.mjs    customers
+server/settings.mjs     settings, test email, summary
+lib/money.mjs           exact money and tax arithmetic
+lib/pdf.mjs             PDF writer and document layout
+lib/mail.mjs            SMTP client (TLS, STARTTLS, AUTH PLAIN/LOGIN) and MIME builder
+migrations/             database schema (each file runs once; never edit a released one)
+ui/                     the page shown inside Ledger (plain HTML/JS, no build)
+test/                   unit tests: npm test
 ```
 
-To run it against a local Ledger checkout, copy (not symlink) this directory
-to `$MODULES_DIR/invoices` and follow "Developing locally" in Ledger's
+To run it against a local Ledger checkout, put this directory (or a symlink)
+at `$MODULES_DIR/sales` and follow "Developing locally" in Ledger's
 `docs/MODULES.md`.
 
 ## Releasing
 
-Bump `version` in `ledger-module.json`, tag (`git tag v1.0.0 && git push origin
-v1.0.0`) and create a GitHub Release from the tag. Ledger picks it up on its
-update schedule.
+Bump `version` in `ledger-module.json`, tag (`git tag v0.1.0 && git push
+origin v0.1.0`) and create a GitHub Release from the tag. Ledger picks it up
+on its update schedule.

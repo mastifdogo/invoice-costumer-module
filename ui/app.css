@@ -12,7 +12,7 @@
 * { box-sizing: border-box; }
 body { margin: 0; padding: 0.75rem 1.25rem 2rem; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
 h1 { font-size: 1.35rem; margin: 0.5rem 0 1rem; display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
-h1 .button { font-size: 0.9rem; font-weight: 500; }
+h1 .button, h1 button { font-size: 0.9rem; font-weight: 500; }
 h2 { font-size: 1.05rem; margin: 1.5rem 0 0.6rem; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -20,7 +20,7 @@ a:hover { text-decoration: underline; }
 .right { text-align: right; }
 .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
-.tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border); margin-bottom: 0.75rem; }
+.tabs { display: flex; gap: 0.25rem; overflow-x: auto; border-bottom: 1px solid var(--border); margin-bottom: 0.75rem; }
 .tabs a { padding: 0.45rem 0.85rem; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; }
 .tabs a.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
 .tabs a:hover { text-decoration: none; color: var(--text); }
@@ -75,6 +75,10 @@ tfoot td { border-bottom: 0; }
 .badge.overdue { color: var(--warn); }
 .badge.paid { color: var(--ok); }
 .badge.void { color: var(--danger); }
+.badge.sent { color: var(--accent); }
+.badge.accepted { color: var(--ok); }
+.badge.declined, .badge.expired { color: var(--danger); }
+.badge.converted { color: var(--muted); }
 
 .filters { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; margin-bottom: 0.75rem; }
 .filters input { max-width: 260px; }
@@ -86,7 +90,12 @@ tfoot td { border-bottom: 0; }
 .lines td input, .lines td textarea { padding: 0.3rem 0.45rem; }
 .lines .qty { width: 6rem; }
 .lines .price { width: 8rem; }
-.lines .tax { width: 6rem; }
+.lines .cat { width: 10rem; }
+.lines .tax { width: 9rem; }
+.scroll { overflow-x: auto; }
+.chips { display: inline-flex; flex-wrap: wrap; gap: 0.25rem; }
+.chip { padding: 0.15rem 0.5rem; font-size: 0.8rem; border-radius: 999px; color: var(--muted); }
+.chip.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 .lines .amount { width: 8rem; padding-top: 0.6rem; }
 .totals { margin-left: auto; width: auto; min-width: 280px; }
 .totals td { border: 0; padding: 0.2rem 0.5rem; }

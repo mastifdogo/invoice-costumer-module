@@ -28,22 +28,31 @@ test("formatting", () => {
 	assert.equal(formatMoney(-5n, ""), "-0.05");
 });
 
-test("computeTotals: tax per rate, rounded once", () => {
+test("computeTotals: each tax once on the lines it applies to", () => {
+	const GST = { id: 1, name: "GST", rate: 5000 };
+	const PST = { id: 4, name: "PST", rate: 7000 };
 	const t = computeTotals([
-		{ quantity: 1500n, unit_price_cents: 3333n, tax_rate: 13000 }, // 1.5 × 33.33 = 49.995 → 50.00
-		{ quantity: 1000n, unit_price_cents: 1001n, tax_rate: 13000 },
-		{ quantity: 2000n, unit_price_cents: 500n, tax_rate: 0 },
-		{ quantity: 1000n, unit_price_cents: 1000n, tax_rate: 5000 },
+		{ quantity: 1500n, unit_price_cents: 3333n, taxes: [GST, PST] }, // 1.5 × 33.33 = 49.995 → 50.00
+		{ quantity: 1000n, unit_price_cents: 1001n, taxes: [GST] },
+		{ quantity: 2000n, unit_price_cents: 500n, taxes: [] },
 	]);
-	assert.deepEqual(t.amounts, [5000n, 1001n, 1000n, 1000n]);
-	assert.equal(t.subtotal, 8001n);
-	// 13% of 60.01 = 7.8013 → 7.80; 5% of 10.00 = 0.50
+	assert.deepEqual(t.amounts, [5000n, 1001n, 1000n]);
+	assert.equal(t.subtotal, 7001n);
+	// GST 5% of 60.01 = 3.0005 → 3.00; PST 7% of 50.00 = 3.50
 	assert.deepEqual(t.taxes, [
-		{ rate: 5000, base_cents: 1000n, tax_cents: 50n },
-		{ rate: 13000, base_cents: 6001n, tax_cents: 780n },
+		{ id: 1, name: "GST", rate: 5000, base_cents: 6001n, tax_cents: 300n },
+		{ id: 4, name: "PST", rate: 7000, base_cents: 5000n, tax_cents: 350n },
 	]);
-	assert.equal(t.tax, 830n);
-	assert.equal(t.total, 8831n);
+	assert.equal(t.tax, 650n);
+	assert.equal(t.total, 7651n);
+});
+
+test("computeTotals: a tax whose rate changed is kept apart", () => {
+	const t = computeTotals([
+		{ quantity: 1000n, unit_price_cents: 10000n, taxes: [{ id: 2, name: "HST", rate: 13000 }] },
+		{ quantity: 1000n, unit_price_cents: 10000n, taxes: [{ id: 2, name: "HST", rate: 15000 }] },
+	]);
+	assert.deepEqual(t.taxes.map((x) => x.tax_cents), [1300n, 1500n]);
 });
 
 test("dates", () => {

@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { PdfDocument, renderInvoicePdf, textWidth, wrap } from "../lib/pdf.mjs";
+import { PdfDocument, renderDocumentPdf, textWidth, wrap } from "../lib/pdf.mjs";
 
-const settings = { business_name: "Maple & Co (Test)", business_address: "1 Main St\nToronto ON", business_email: "billing@example.com", tax_label: "HST", tax_id: "123456789RT0001", footer: "Pay by e-Transfer to billing@example.com" };
-const invoice = (lines) => ({
+const settings = { business_name: "Maple & Co (Test)", business_address: "1 Main St\nToronto ON", business_email: "billing@example.com", tax_id_label: "GST/HST No.", tax_id: "123456789RT0001", estimate_terms: "This is an estimate, not a fixed price.", footer: "Pay by e-Transfer to billing@example.com" };
+const invoice = (lines, kind = "invoice") => ({
+	kind,
 	number: "INV-0001",
 	status: "open",
 	issue_date: "2026-10-01",
@@ -13,14 +14,14 @@ const invoice = (lines) => ({
 	notes: "Thanks — à bientôt!",
 	customer: { name: "Zoë Example", company: "Example Ltd", address: "2 Side St", email: "zoe@example.com" },
 	lines,
-	taxes: [{ rate: 13000, base_cents: 10000n, tax_cents: 1300n }],
+	taxes: [{ id: 1, name: "GST", rate: 5000, base_cents: 10000n, tax_cents: 500n }, { id: 4, name: "PST", rate: 7000, base_cents: 10000n, tax_cents: 700n }],
 	subtotal_cents: 10000n,
 	tax_cents: 1300n,
 	total_cents: 11300n,
 	paid_cents: 0n,
 	balance_cents: 11300n,
 });
-const line = (i) => ({ description: `Consulting (item ${i}) with a fairly long description that needs to wrap onto a second line in the table`, quantity: 1500n, unit_price_cents: 10000n, tax_rate: 13000, amount_cents: 15000n });
+const line = (i) => ({ description: `Consulting (item ${i}) with a fairly long description that needs to wrap onto a second line in the table`, quantity: 1500n, unit_price_cents: 10000n, taxes: [{ id: 1, name: "GST", rate: 5000 }, { id: 4, name: "PST", rate: 7000 }], amount_cents: 15000n });
 
 /** Checks the cross-reference table points at each object. */
 function checkStructure(buf) {
@@ -57,15 +58,25 @@ test("escapes text and keeps offsets right", () => {
 });
 
 test("renders a one-page invoice", () => {
-	const s = checkStructure(renderInvoicePdf(invoice([line(1), line(2)]), settings));
+	const s = checkStructure(renderDocumentPdf(invoice([line(1), line(2)]), settings));
 	assert.match(s, /\/Count 1 /);
 	assert.ok(s.includes("(INV-0001)"));
 	assert.ok(s.includes("(Maple & Co \\(Test\\))"));
 });
 
 test("long invoices continue on more pages", () => {
-	const s = checkStructure(renderInvoicePdf(invoice(Array.from({ length: 60 }, (_, i) => line(i))), settings));
+	const s = checkStructure(renderDocumentPdf(invoice(Array.from({ length: 60 }, (_, i) => line(i))), settings));
 	const pages = Number(/\/Count (\d+)/.exec(s)[1]);
 	assert.ok(pages >= 3, `pages: ${pages}`);
 	assert.ok(s.includes(`(Page ${pages} of ${pages})`));
+});
+
+test("quotes and estimates have their own title, dates and terms", () => {
+	const s = checkStructure(renderDocumentPdf(invoice([line(1)], "estimate"), settings));
+	assert.ok(s.includes("(ESTIMATE)"));
+	assert.ok(s.includes("(Valid until)"));
+	assert.ok(s.includes("(This is an estimate, not a fixed price.)"));
+	assert.ok(!s.includes("(Balance due)"));
+	assert.ok(s.includes("(GST + PST)"));
+	assert.ok(s.includes("(GST/HST No. 123456789RT0001)"));
 });
