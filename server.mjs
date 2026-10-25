@@ -6,17 +6,29 @@
 import { catalogRoutes } from "./server/catalog.mjs";
 import { helpers } from "./server/common.mjs";
 import { customerRoutes } from "./server/customers.mjs";
+import { dashboardSync } from "./server/dashboard.mjs";
 import { documentRoutes } from "./server/documents.mjs";
 import { mailHelpers } from "./server/email.mjs";
 import { settingsRoutes } from "./server/settings.mjs";
 
 export default async function register(ctx) {
 	const h = helpers(ctx);
-	const mail = mailHelpers(ctx, h);
-	settingsRoutes(ctx, h, mail);
-	catalogRoutes(ctx, h);
-	customerRoutes(ctx, h);
-	const docs = documentRoutes(ctx, h, mail);
+	const dashboard = dashboardSync(ctx, h);
+	// Every successful change (anything but GET) refreshes the dashboard items.
+	const routes = Object.create(ctx);
+	routes.route = (method, path, handler) =>
+		ctx.route(method, path, async (req) => {
+			const result = await handler(req);
+			if (method !== "GET") dashboard.schedule();
+			return result;
+		});
+
+	const mail = mailHelpers(routes, h);
+	settingsRoutes(routes, h, mail);
+	catalogRoutes(routes, h);
+	customerRoutes(routes, h);
+	const docs = documentRoutes(routes, h, mail);
 	await docs.recover();
-	ctx.log.info("sales module ready");
+	dashboard.start();
+	ctx.log.info("sales module ready", { dashboard: Boolean(ctx.dashboard) });
 }

@@ -24,20 +24,46 @@ in Ledger's sidebar as **Sales**, with a hammer icon, and lets you:
   Fastmail, iCloud, Zoho or a local relay), with editable messages and a
   log of every send
 - **record payments**, including partial payments, and see what's overdue
+- **put reminders on Ledger's dashboard**: a notification when invoices are
+  overdue, a to-do for each issued invoice that hasn't been emailed, and a
+  to-do to follow up on each sent quote or estimate. They clear themselves
+  when the invoice is emailed or paid, or the quote is decided. This needs a
+  Ledger with dashboard support (the release after v0.7.1); on older
+  versions the module works the same without them.
 - optionally **post to the books**: issuing an invoice posts Dr receivable,
   Cr each line's category revenue account and Cr each tax's payable account.
   A payment posts Dr bank / Cr receivable. Voiding an invoice or removing a
   payment reverses its entry. Quotes and estimates are never posted.
 
 It has no dependencies (the PDF writer and the email client are built in),
-so Ledger installs it as-is.
+so Ledger installs it as-is. The page works at full width and in a narrow
+side pane.
 
 ## Install
 
-Needs **Ledger 0.7.0 or newer** (for the sidebar icon). On Ledger's
-**Modules** page, enter `mastifdogo/invoice-costumer-module` and install.
+Needs **Ledger 0.7.0 or newer** (for the sidebar icon). In Ledger, open
+**Settings → Modules**, enter `mastifdogo/invoice-costumer-module` and add it.
 Ledger installs the latest GitHub Release, creates the module's database
-schema (`mod_sales`) and adds **Sales** to the sidebar.
+schema (`mod_sales`) and adds **Sales** to the sidebar. You can hide or move
+it under **Settings → Sidebar**.
+
+**Upgrading from v0.0.0** (then called "Invoices & customers", id
+`invoices`): Ledger won't update a module whose id changed, so the old one
+keeps running with the generic icon. Remove it under Settings → Modules,
+then add `mastifdogo/invoice-costumer-module` again. The old module's data
+stays in the `mod_invoices` schema.
+
+### Accounts it uses
+
+Only when ledger posting is on. Create them under **Accounts** first, in
+each currency you invoice in. The codes are examples; pick them in Settings.
+
+| Purpose | Type | Example |
+|---|---|---|
+| Accounts receivable | asset | `1200 Accounts receivable` |
+| Bank (where payments land) | asset | `1000 Bank` |
+| Revenue per category, plus a default for lines without one | revenue | `4000 Sales`, `4100 Labour`, `4200 Materials` |
+| Each sales tax you collect | liability | `2200 GST/HST payable`, `2210 PST payable` |
 
 ## Set up
 
@@ -111,6 +137,7 @@ server/documents.mjs    invoices, quotes, estimates (lines, posting, PDF, email)
 server/catalog.mjs      taxes and categories
 server/customers.mjs    customers
 server/settings.mjs     settings, test email, summary
+server/dashboard.mjs    notifications and to-dos on Ledger's dashboard
 lib/money.mjs           exact money and tax arithmetic
 lib/pdf.mjs             PDF writer and document layout
 lib/mail.mjs            SMTP client (TLS, STARTTLS, AUTH PLAIN/LOGIN) and MIME builder
@@ -125,6 +152,7 @@ at `$MODULES_DIR/sales` and follow "Developing locally" in Ledger's
 
 ## Releasing
 
-Bump `version` in `ledger-module.json`, tag (`git tag v0.1.0 && git push
-origin v0.1.0`) and create a GitHub Release from the tag. Ledger picks it up
-on its update schedule.
+Bump `version` in `ledger-module.json`, tag it (`git tag v0.2.0 && git push
+origin v0.2.0`) and create a GitHub Release from the tag (not a draft or
+pre-release). Ledger installs it on its update schedule, or straight away
+with **Update modules now** under Settings → Modules.

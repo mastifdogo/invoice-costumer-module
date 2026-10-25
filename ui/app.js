@@ -133,8 +133,10 @@ const textarea = (name, value, attrs = {}) => {
 const select = (name, value, options, attrs = {}) =>
 	h("select", { name, ...attrs }, options.map(([v, label]) => h("option", { value: v, selected: String(v) === String(value ?? "") }, label)));
 const CURRENCY_OPTIONS = [["CAD", "CAD"], ["USD", "USD"]];
+// Tables scroll sideways inside narrow panes instead of widening the page.
+const scroll = (el) => h("div", { class: "scroll" }, el);
 const table = (heads, rows, attrs = {}) =>
-	h("table", attrs, h("thead", {}, h("tr", {}, heads.map((x) => (Array.isArray(x) ? h("th", { class: x[1] }, x[0]) : h("th", {}, x))))), h("tbody", {}, rows));
+	scroll(h("table", attrs, h("thead", {}, h("tr", {}, heads.map((x) => (Array.isArray(x) ? h("th", { class: x[1] }, x[0]) : h("th", {}, x))))), h("tbody", {}, rows)));
 
 function openDialog(...content) {
 	const d = document.getElementById("dialog");
@@ -327,15 +329,17 @@ async function docList(kind) {
 		hints.length ? h("ul", { class: "muted" }, hints) : null,
 		cards.length ? h("div", { class: "cards" }, cards) : null,
 		h("div", { class: "filters" }, seg, search),
-		h(
-			"table",
-			{},
+		scroll(
 			h(
-				"thead",
+				"table",
 				{},
-				h("tr", {}, ["Number", "Customer", K.date, K.due, "Status"].map((x) => h("th", {}, x)), h("th", { class: "right" }, "Total"), isInvoice ? h("th", { class: "right" }, "Balance") : null),
+				h(
+					"thead",
+					{},
+					h("tr", {}, ["Number", "Customer", K.date, K.due, "Status"].map((x) => h("th", {}, x)), h("th", { class: "right" }, "Total"), isInvoice ? h("th", { class: "right" }, "Balance") : null),
+				),
+				tbody,
 			),
-			tbody,
 		),
 	);
 	await load();
@@ -401,13 +405,13 @@ async function docForm(kind, idOrNull, qs = new URLSearchParams()) {
 		const row = h(
 			"tr",
 			{},
-			h("td", { class: "cat" }, catSel),
-			h("td", {}, textarea("description", l.description ?? "", { rows: 1, placeholder: "Description", required: true })),
-			h("td", { class: "qty" }, input("quantity", l.quantity_text ?? "1", { inputmode: "decimal" })),
-			h("td", { class: "price" }, input("unit_price", l.unit_price_cents !== undefined ? fmtDec(l.unit_price_cents, 2) : "", { inputmode: "decimal", placeholder: "0.00" })),
-			h("td", { class: "tax" }, picker.el),
+			h("td", { class: "cat", "data-label": "Category" }, catSel),
+			h("td", { class: "desc" }, textarea("description", l.description ?? "", { rows: 1, placeholder: "Description", required: true })),
+			h("td", { class: "qty", "data-label": "Qty" }, input("quantity", l.quantity_text ?? "1", { inputmode: "decimal" })),
+			h("td", { class: "price", "data-label": "Unit price" }, input("unit_price", l.unit_price_cents !== undefined ? fmtDec(l.unit_price_cents, 2) : "", { inputmode: "decimal", placeholder: "0.00" })),
+			h("td", { class: "tax", "data-label": "Taxes" }, picker.el),
 			h("td", { class: "amount num" }, ""),
-			h("td", {}, h("button", { type: "button", class: "link", title: "Remove line", onclick: () => (row.remove(), recalc()) }, "✕")),
+			h("td", { class: "rm" }, h("button", { type: "button", class: "link", title: "Remove line", "aria-label": "Remove line", onclick: () => (row.remove(), recalc()) }, "✕")),
 		);
 		row._taxes = picker;
 		row._touched = Boolean(existing && l.description !== undefined);
@@ -473,14 +477,10 @@ async function docForm(kind, idOrNull, qs = new URLSearchParams()) {
 		),
 		h("h2", {}, "Lines"),
 		h(
-			"div",
-			{ class: "scroll" },
-			h(
-				"table",
-				{ class: "lines" },
-				h("thead", {}, h("tr", {}, h("th", {}, "Category"), h("th", {}, "Description"), h("th", {}, "Qty"), h("th", {}, "Unit price"), h("th", {}, "Taxes"), h("th", { class: "right" }, "Amount"), h("th"))),
-				linesBody,
-			),
+			"table",
+			{ class: "lines" },
+			h("thead", {}, h("tr", {}, h("th", {}, "Category"), h("th", {}, "Description"), h("th", {}, "Qty"), h("th", {}, "Unit price"), h("th", {}, "Taxes"), h("th", { class: "right" }, "Amount"), h("th"))),
+			linesBody,
 		),
 		h(
 			"div",
@@ -773,7 +773,7 @@ async function customerList() {
 	render(
 		h("h1", {}, "Customers", h("span", { class: "spacer" }), h("a", { class: "button primary", href: "#/customers/new" }, "+ New customer")),
 		h("div", { class: "filters" }, search, h("label", { class: "check" }, arch, h("span", {}, "Show archived"))),
-		h("table", {}, h("thead", {}, h("tr", {}, ["Name", "Company", "Email", "Phone"].map((x) => h("th", {}, x)), h("th", { class: "right" }, "Invoices"), h("th", { class: "right" }, "Outstanding"))), tbody),
+		scroll(h("table", {}, h("thead", {}, h("tr", {}, ["Name", "Company", "Email", "Phone"].map((x) => h("th", {}, x)), h("th", { class: "right" }, "Invoices"), h("th", { class: "right" }, "Outstanding"))), tbody)),
 	);
 	await load();
 }

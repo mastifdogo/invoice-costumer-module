@@ -1,8 +1,8 @@
 {
   "id": "sales",
   "name": "Sales",
-  "version": "0.1.0",
-  "description": "Invoices, quotes and estimates with GST and other sales taxes, customer records and sales categories that track to your revenue accounts. Emails PDFs through your own mail account (SMTP) and can post invoices and payments to the books.",
+  "version": "0.2.0",
+  "description": "Invoices, quotes and estimates with GST and other sales taxes, customer records and sales categories that track to your revenue accounts. Puts overdue invoices and follow-ups on the dashboard. Emails PDFs through your own mail account (SMTP) and can post invoices and payments to the books.",
   "ledger": ">=0.7.0",
   "server": "server.mjs",
   "ui": "ui",
