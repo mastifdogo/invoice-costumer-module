@@ -1,0 +1,10 @@
+{
+  "name": "ledger-module-invoices",
+  "private": true,
+  "type": "module",
+  "description": "Invoices & customers module for Ledger. No dependencies; installed as-is.",
+  "engines": { "node": ">=22.18" },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}
