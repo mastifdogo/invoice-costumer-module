@@ -20,16 +20,17 @@ in Ledger's sidebar as **Sales**, with a hammer icon, and lets you:
 - **keep customer records**: contact details, billing address, Cc addresses,
   currency, payment terms, taxes, notes, balance owing and every document
   sent to them
-- **email PDFs** through your own mail account (SMTP: Gmail, Microsoft 365,
-  Fastmail, iCloud, Zoho or a local relay), with editable messages and a
-  log of every send
+- **email PDFs** through Ledger's shared Gmail account, or your own mail
+  server (SMTP: Microsoft 365, Fastmail, iCloud, Zoho, a local relay…), with
+  editable messages and a log of every send
 - **record payments**, including partial payments, and see what's overdue
 - **put reminders on Ledger's dashboard**: a notification when invoices are
   overdue, a to-do for each issued invoice that hasn't been emailed, and a
   to-do to follow up on each sent quote or estimate. They clear themselves
-  when the invoice is emailed or paid, or the quote is decided. This needs a
-  Ledger with dashboard support (the release after v0.7.1); on older
-  versions the module works the same without them.
+  when the invoice is emailed or paid, or the quote is decided. Each one
+  opens the document it's about.
+- **find things from Ledger's search bar**: customers, and invoices, quotes
+  and estimates by number, customer or PO number.
 - optionally **post to the books**: issuing an invoice posts Dr receivable,
   Cr each line's category revenue account and Cr each tax's payable account.
   A payment posts Dr bank / Cr receivable. Voiding an invoice or removing a
@@ -41,11 +42,17 @@ side pane.
 
 ## Install
 
-Needs **Ledger 0.7.0 or newer** (for the sidebar icon). In Ledger, open
+Needs **Ledger 0.10.0 or newer** (settings form, Gmail, search, user
+roles). Links from search and the dashboard open the exact document with
+Ledger 0.10.1 or newer; on 0.10.0 they open the Sales page. In Ledger, open
 **Settings → Modules**, enter `mastifdogo/invoice-costumer-module` and add it.
 Ledger installs the latest GitHub Release, creates the module's database
 schema (`mod_sales`) and adds **Sales** to the sidebar. You can hide or move
 it under **Settings → Sidebar**.
+
+**Upgrading from v0.1.0**: your settings are copied into Ledger's settings
+form (Settings → Sales) on the first start; check them there. If you had set
+up SMTP, Sales keeps using it.
 
 **Upgrading from v0.0.0** (then called "Invoices & customers", id
 `invoices`): Ledger won't update a module whose id changed, so the old one
@@ -67,35 +74,44 @@ each currency you invoice in. The codes are examples; pick them in Settings.
 
 ## Set up
 
-Open **Sales → Settings**:
+Setup is for admins (Ledger's user roles). Bookkeepers create and send
+documents, record payments and manage customers; viewers can only look.
 
-1. **Your business**: name, address, GST/HST registration number and footer.
-2. **Taxes**: GST is on. Click **Edit** on each tax you collect, turn it on
-   and choose the account it's owed to (e.g. `2200 GST/HST payable`). The
-   chips under the table choose which taxes new lines get by default.
-3. **Numbering and defaults**: prefixes and next numbers for invoices,
-   quotes and estimates; payment terms; how long quotes and estimates stay
-   valid; the terms printed on quotes and estimates.
-4. **Ledger posting** (optional): turn on *Post invoices and payments to the
-   books* and choose the receivable, default revenue and bank accounts for
-   each currency. Create the accounts under **Accounts** in Ledger first.
-5. **Email**: pick your provider, enter username, password and sender
-   address, save, and press **Send a test email**.
+1. **Settings → Sales** (Ledger's settings form for the module):
+   - **Your business**: name, address, GST/HST registration number, footer.
+   - **Numbering and defaults**: number prefixes, payment terms, how long
+     quotes and estimates stay valid, the terms printed on them.
+   - **Ledger posting** (optional): turn it on and enter the receivable,
+     default revenue and bank account codes for each currency.
+   - **Email**: *Ledger's Gmail account* (the default) or *My own mail
+     server* with its SMTP details.
+   - **Email messages**: subject and text for invoices and for
+     quotes/estimates, with placeholders.
+2. Below that form on the same tab:
+   - **Email** shows whether sending works, with a **Send a test email** button.
+   - **Numbering** sets the next invoice, quote and estimate number.
+   - **Taxes**: GST is on. Click **Edit** on each tax you collect, turn it
+     on, choose the account it's owed to (e.g. `2200 GST/HST payable`) and
+     whether new lines get it by default.
+3. **Gmail** (if you use it): an admin connects the account under
+   **Settings → Gmail** and ticks **Sales** under "may send". Until then the
+   Email section says what's missing.
+4. Under **Sales → Categories**, add your sales categories and the revenue
+   account each goes to. Lines without a category use the default revenue
+   account.
 
-   | Provider | Server | Port / security | Password |
-   |---|---|---|---|
-   | Gmail / Google Workspace | smtp.gmail.com | 465 TLS | an [App Password](https://myaccount.google.com/apppasswords) (needs 2-Step Verification) |
-   | Microsoft 365 / Outlook | smtp.office365.com | 587 STARTTLS | account or app password; SMTP AUTH must be enabled for the mailbox |
-   | Fastmail | smtp.fastmail.com | 465 TLS | app password |
-   | iCloud | smtp.mail.me.com | 587 STARTTLS | app-specific password |
-   | Local relay (Postfix…) | e.g. localhost | 25 none | usually none |
+For your own mail server:
 
-   The container needs outbound access to that port. The password is stored
-   in the module's database table and never sent back to the browser.
+| Provider | Server | Port / security | Password |
+|---|---|---|---|
+| Microsoft 365 / Outlook | smtp.office365.com | 587 STARTTLS | account or app password; SMTP AUTH must be enabled for the mailbox |
+| Fastmail | smtp.fastmail.com | 465 TLS | app password |
+| iCloud | smtp.mail.me.com | 587 STARTTLS | app-specific password |
+| Gmail without Ledger's connection | smtp.gmail.com | 465 TLS | an [App Password](https://myaccount.google.com/apppasswords) |
+| Local relay (Postfix…) | e.g. localhost | 25 none | usually none |
 
-Then, under **Categories**, add your sales categories and the revenue
-account each goes to. Lines without a category use the default revenue
-account.
+The container needs outbound access to that port. The SMTP password is a
+secret field in Ledger's form and is never sent back to the browser.
 
 ## Using it
 
@@ -125,7 +141,9 @@ login:
 - invoices also have `/:id/issue`, `/:id/void` and `/:id/payments`
 - quotes and estimates also have `/:id/mark-sent`, `/:id/accept`,
   `/:id/decline`, `/:id/reopen` and `/:id/convert`
-- `customers`, `categories`, `taxes`, `settings`, `settings/test-email`, `summary`
+- `customers`, `categories`, `taxes`, `settings` (read-only), `numbering`,
+  `settings/test-email`, `summary`
+- Changing taxes, categories or numbering needs the admin role.
 
 ## Development
 
@@ -136,19 +154,29 @@ server/common.mjs       input validation, settings, shared helpers
 server/documents.mjs    invoices, quotes, estimates (lines, posting, PDF, email)
 server/catalog.mjs      taxes and categories
 server/customers.mjs    customers
-server/settings.mjs     settings, test email, summary
+server/settings.mjs     settings for the page, numbering, test email, summary
+server/email.mjs        sending through ctx.gmail or SMTP
+server/search.mjs       results for Ledger's search bar
 server/dashboard.mjs    notifications and to-dos on Ledger's dashboard
+server/move-settings.mjs  one-time copy of pre-0.2.0 settings into Ledger's form
 lib/money.mjs           exact money and tax arithmetic
 lib/pdf.mjs             PDF writer and document layout
 lib/mail.mjs            SMTP client (TLS, STARTTLS, AUTH PLAIN/LOGIN) and MIME builder
 migrations/             database schema (each file runs once; never edit a released one)
-ui/                     the page shown inside Ledger (plain HTML/JS, no build)
+ui/                     the page shown inside Ledger (plain HTML/JS, no build);
+                        setup.html is shown under the settings form
 test/                   unit tests: npm test
 ```
 
-To run it against a local Ledger checkout, put this directory (or a symlink)
-at `$MODULES_DIR/sales` and follow "Developing locally" in Ledger's
-`docs/MODULES.md`.
+Check it with Ledger's module checker, from a Ledger checkout (needs
+PostgreSQL):
+
+```sh
+TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/postgres \
+  node .claude/skills/ledger-module/scripts/check-module.ts ../invoice-costumer-module
+```
+
+Add `--serve 8098` to keep it running and try it in a browser.
 
 ## Releasing
 

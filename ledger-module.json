@@ -2,13 +2,251 @@
   "id": "sales",
   "name": "Sales",
   "version": "0.2.0",
-  "description": "Invoices, quotes and estimates with GST and other sales taxes, customer records and sales categories that track to your revenue accounts. Puts overdue invoices and follow-ups on the dashboard. Emails PDFs through your own mail account (SMTP) and can post invoices and payments to the books.",
-  "ledger": ">=0.7.0",
+  "description": "Invoices, quotes and estimates with GST and other sales taxes, customer records and sales categories that track to your revenue accounts. Emails PDFs through Ledger's Gmail (or your own SMTP), puts overdue invoices and follow-ups on the dashboard, and can post invoices and payments to the books.",
+  "ledger": ">=0.10.0",
   "server": "server.mjs",
   "ui": "ui",
   "nav": {
     "label": "Sales",
     "icon": "hammer"
   },
-  "migrations": "migrations"
+  "migrations": "migrations",
+  "settings": {
+    "fields": [
+      {
+        "key": "business_name",
+        "label": "Business name",
+        "help": "Shown at the top of every invoice, quote and estimate."
+      },
+      {
+        "key": "business_address",
+        "label": "Business address",
+        "type": "textarea"
+      },
+      {
+        "key": "business_email",
+        "label": "Business email"
+      },
+      {
+        "key": "business_phone",
+        "label": "Business phone"
+      },
+      {
+        "key": "tax_id_label",
+        "label": "Tax number label",
+        "default": "GST/HST No."
+      },
+      {
+        "key": "tax_id",
+        "label": "GST/HST registration number",
+        "help": "Printed on every document, e.g. 123456789RT0001."
+      },
+      {
+        "key": "footer",
+        "label": "Footer",
+        "type": "textarea",
+        "help": "Printed at the bottom of every document: payment instructions, thanks…"
+      },
+      {
+        "key": "invoice_prefix",
+        "label": "Invoice number prefix",
+        "default": "INV-"
+      },
+      {
+        "key": "quote_prefix",
+        "label": "Quote number prefix",
+        "default": "QUO-"
+      },
+      {
+        "key": "estimate_prefix",
+        "label": "Estimate number prefix",
+        "default": "EST-"
+      },
+      {
+        "key": "default_currency",
+        "label": "Default currency",
+        "type": "select",
+        "options": [
+          "CAD",
+          "USD"
+        ],
+        "default": "CAD"
+      },
+      {
+        "key": "default_terms_days",
+        "label": "Invoice payment terms (days)",
+        "type": "number",
+        "min": 0,
+        "max": 365,
+        "default": 30
+      },
+      {
+        "key": "quote_valid_days",
+        "label": "Quotes valid for (days)",
+        "type": "number",
+        "min": 0,
+        "max": 365,
+        "default": 30
+      },
+      {
+        "key": "estimate_valid_days",
+        "label": "Estimates valid for (days)",
+        "type": "number",
+        "min": 0,
+        "max": 365,
+        "default": 30
+      },
+      {
+        "key": "quote_terms",
+        "label": "Terms printed on quotes",
+        "type": "textarea",
+        "default": "Prices are fixed until the date above. To accept, reply to this email."
+      },
+      {
+        "key": "estimate_terms",
+        "label": "Terms printed on estimates",
+        "type": "textarea",
+        "default": "This is an estimate, not a fixed price. The final invoice may differ."
+      },
+      {
+        "key": "post_to_ledger",
+        "label": "Post invoices and payments to the books",
+        "type": "boolean",
+        "default": false,
+        "help": "Issuing posts Dr receivable / Cr category revenue and each tax; payments post Dr bank / Cr receivable."
+      },
+      {
+        "key": "receivable_account_cad",
+        "label": "Receivable account (CAD)",
+        "help": "An asset account code in CAD, e.g. 1200."
+      },
+      {
+        "key": "revenue_account_cad",
+        "label": "Default revenue account (CAD)",
+        "help": "For lines without a category, or a category with no account in this currency."
+      },
+      {
+        "key": "bank_account_cad",
+        "label": "Bank account for payments (CAD)"
+      },
+      {
+        "key": "receivable_account_usd",
+        "label": "Receivable account (USD)",
+        "help": "An asset account code in USD, e.g. 1200."
+      },
+      {
+        "key": "revenue_account_usd",
+        "label": "Default revenue account (USD)",
+        "help": "For lines without a category, or a category with no account in this currency."
+      },
+      {
+        "key": "bank_account_usd",
+        "label": "Bank account for payments (USD)"
+      },
+      {
+        "key": "email_via",
+        "label": "Send email with",
+        "type": "select",
+        "options": [
+          {
+            "value": "gmail",
+            "label": "Ledger's Gmail account (Settings → Gmail)"
+          },
+          {
+            "value": "smtp",
+            "label": "My own mail server (SMTP, below)"
+          }
+        ],
+        "default": "gmail"
+      },
+      {
+        "key": "from_name",
+        "label": "Sender name",
+        "help": "Defaults to the business name."
+      },
+      {
+        "key": "reply_to",
+        "label": "Reply-to address (optional)"
+      },
+      {
+        "key": "bcc_self",
+        "label": "Send me a copy (Bcc)",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "key": "smtp_host",
+        "label": "SMTP server",
+        "help": "Only for “My own mail server”. Gmail: smtp.gmail.com; Microsoft 365: smtp.office365.com."
+      },
+      {
+        "key": "smtp_port",
+        "label": "SMTP port",
+        "type": "number",
+        "min": 1,
+        "max": 65535,
+        "default": 587
+      },
+      {
+        "key": "smtp_security",
+        "label": "SMTP security",
+        "type": "select",
+        "options": [
+          {
+            "value": "tls",
+            "label": "TLS (usually port 465)"
+          },
+          {
+            "value": "starttls",
+            "label": "STARTTLS (usually port 587)"
+          },
+          {
+            "value": "none",
+            "label": "None (local relay only)"
+          }
+        ],
+        "default": "starttls"
+      },
+      {
+        "key": "smtp_username",
+        "label": "SMTP username"
+      },
+      {
+        "key": "smtp_password",
+        "label": "SMTP password",
+        "type": "secret",
+        "help": "Many providers need an app password here."
+      },
+      {
+        "key": "from_email",
+        "label": "Send from (SMTP)",
+        "help": "The sender address when using your own mail server."
+      },
+      {
+        "key": "email_subject",
+        "label": "Invoice email subject",
+        "default": "Invoice {{number}} from {{business}}"
+      },
+      {
+        "key": "email_body",
+        "label": "Invoice email message",
+        "type": "textarea",
+        "default": "Hello {{customer}},\n\nPlease find attached invoice {{number}} for {{total}}, due {{due_date}}.\n\nThank you for your business.\n{{business}}",
+        "help": "Placeholders: {{number}} {{customer}} {{company}} {{total}} {{balance}} {{issue_date}} {{due_date}} {{business}}"
+      },
+      {
+        "key": "quote_email_subject",
+        "label": "Quote/estimate email subject",
+        "default": "{{type}} {{number}} from {{business}}"
+      },
+      {
+        "key": "quote_email_body",
+        "label": "Quote/estimate email message",
+        "type": "textarea",
+        "default": "Hello {{customer}},\n\nPlease find attached {{type_lower}} {{number}} for {{total}}, valid until {{due_date}}.\n\nLet us know if you have any questions.\n{{business}}",
+        "help": "Also {{type}} (Quote/Estimate), {{type_lower}} and {{valid_until}}."
+      }
+    ],
+    "page": "setup.html"
+  }
 }

@@ -9,6 +9,8 @@ import { customerRoutes } from "./server/customers.mjs";
 import { dashboardSync } from "./server/dashboard.mjs";
 import { documentRoutes } from "./server/documents.mjs";
 import { mailHelpers } from "./server/email.mjs";
+import { moveSettings } from "./server/move-settings.mjs";
+import { searchProvider } from "./server/search.mjs";
 import { settingsRoutes } from "./server/settings.mjs";
 
 export default async function register(ctx) {
@@ -28,6 +30,8 @@ export default async function register(ctx) {
 	catalogRoutes(routes, h);
 	customerRoutes(routes, h);
 	const docs = documentRoutes(routes, h, mail);
+	searchProvider(ctx, h);
+	await moveSettings(ctx, h);
 	await docs.recover();
 	dashboard.start();
 	ctx.log.info("sales module ready", { dashboard: Boolean(ctx.dashboard) });

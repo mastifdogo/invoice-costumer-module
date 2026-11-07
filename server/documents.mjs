@@ -120,12 +120,13 @@ export function documentRoutes(ctx, h, mail) {
 	async function insertDocument(kind, cols, linesJson, user) {
 		const { prefix, next } = KINDS[kind];
 		const names = Object.keys(cols);
-		const params = [...Object.values(cols), user.username, linesJson, kind];
+		// The prefix comes from Ledger's settings form; the counter from the module's own table.
+		const params = [...Object.values(cols), user.username, linesJson, kind, (await loadSettings())[prefix]];
 		const n = names.length;
 		const sql = `
 			WITH n AS (
 				UPDATE ${T("settings")} SET ${next} = ${next} + 1 WHERE id = 1
-				RETURNING ${prefix} || lpad((${next} - 1)::text, 4, '0') AS number
+				RETURNING $${n + 4}::text || lpad((${next} - 1)::text, 4, '0') AS number
 			), doc AS (
 				INSERT INTO ${T("documents")} (kind, number, ${names.join(", ")}, created_by)
 				SELECT $${n + 3}::text, n.number, ${names.map((k, i) => `$${i + 1}::${COLUMN_TYPES[k]}`).join(", ")}, $${n + 1}::text FROM n
@@ -471,7 +472,8 @@ ${paras}
 			const cc = mail.addresses(o.cc ?? d.cc, "cc", false);
 			const subject = o.subject === undefined ? d.subject : text(o, "subject", 300, { required: true });
 			const message = o.message === undefined ? d.message : text(o, "message", 10000, { multiline: true });
-			if (!s.smtp_host || !s.from_email) throw bad("set up email first (Settings → Email)");
+			const st = await mail.status(s);
+			if (!st.ready) throw conflict(st.problem);
 			if (isInvoice && doc.status === "draft") doc = await issueInvoice(did, req.user);
 
 			const recipients = [...to, ...cc].join(", ");
@@ -479,7 +481,7 @@ ${paras}
 				await mail.deliver(s, {
 					to,
 					cc,
-					bcc: s.bcc_self ? [s.from_email] : [],
+					bcc: [],
 					subject,
 					text: message + "\n\n" + summaryRows(doc).map(([k, v]) => `${k}: ${v}`).join("\n") + "\n",
 					html: emailHtml(message, doc),

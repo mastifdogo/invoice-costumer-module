@@ -6,8 +6,8 @@
 
 import { formatMoney, today } from "../lib/money.mjs";
 import { KINDS } from "./common.mjs";
+import { openLink } from "./search.mjs";
 
-const LINK = "/apps/sales";
 const MAX_ITEMS = 50;
 const HOURLY = 60 * 60 * 1000;
 
@@ -32,9 +32,9 @@ export function dashboardSync(ctx, h) {
 		for (const r of rows) {
 			const label = KINDS[r.kind].label.toLowerCase();
 			if (r.kind === "invoice") {
-				todos.set(`send-${r.id}`, { title: `Send invoice ${r.number} to ${r.customer}`.slice(0, 200), body: "Issued but not emailed yet.", due: r.issue_date });
+				todos.set(`send-${r.id}`, { title: `Send invoice ${r.number} to ${r.customer}`.slice(0, 200), body: "Issued but not emailed yet.", due: r.issue_date, link: openLink(`invoices/${r.id}`) });
 			} else {
-				todos.set(`follow-up-${r.id}`, { title: `Follow up on ${label} ${r.number} for ${r.customer}`.slice(0, 200), body: `Valid until ${r.due_date}.`, due: r.due_date });
+				todos.set(`follow-up-${r.id}`, { title: `Follow up on ${label} ${r.number} for ${r.customer}`.slice(0, 200), body: `Valid until ${r.due_date}.`, due: r.due_date, link: openLink(`${KINDS[r.kind].plural}/${r.id}`) });
 			}
 		}
 		return todos;
@@ -61,7 +61,7 @@ export function dashboardSync(ctx, h) {
 			title: `${rows.length} invoice${rows.length === 1 ? " is" : "s are"} overdue: ${[...totals].map(([cur, c]) => formatMoney(c, cur)).join(", ")}`.slice(0, 200),
 			body: lines.join("\n").slice(0, 2000),
 			level: "warning",
-			link: LINK,
+			link: openLink("invoices?status=overdue"),
 		});
 	}
 
@@ -72,8 +72,8 @@ export function dashboardSync(ctx, h) {
 		for (const [key, t] of wanted) {
 			const cur = byKey.get(key);
 			// Re-post only when something changed, so the dashboard isn't rewritten on every sync.
-			if (!cur || cur.closed_at || cur.title !== t.title || cur.body !== t.body || cur.due_date !== t.due) {
-				await d.todo({ key, ...t, link: LINK });
+			if (!cur || cur.closed_at || cur.title !== t.title || cur.body !== t.body || cur.due_date !== t.due || cur.link !== t.link) {
+				await d.todo({ key, ...t });
 				if (cur?.closed_at) await d.reopen(key);
 			}
 		}

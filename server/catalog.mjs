@@ -4,7 +4,7 @@
 import { today } from "../lib/money.mjs";
 
 export function catalogRoutes(ctx, h) {
-	const { T, q, bad, notFound, conflict, body, text, bool, rate, id, accountMap, checkTaxIds } = h;
+	const { T, q, bad, notFound, conflict, body, text, bool, rate, id, accountMap, checkTaxIds, requireAdmin } = h;
 
 	// ---- taxes ---------------------------------------------------------------
 
@@ -21,6 +21,8 @@ export function catalogRoutes(ctx, h) {
 		if (!partial || "accounts" in o) out.accounts = JSON.stringify(await accountMap(o.accounts, "accounts"));
 		if ("active" in o) out.active = bool(o.active, "active");
 		if ("position" in o) out.position = h.intIn(o.position, "position", 0, 1000);
+		// Whether new lines get this tax unless the category or customer says otherwise.
+		if ("is_default" in o) out.is_default = bool(o.is_default, "is_default");
 		return out;
 	}
 
@@ -35,6 +37,7 @@ export function catalogRoutes(ctx, h) {
 	});
 
 	ctx.route("POST", "/taxes", async (req) => {
+		requireAdmin(req);
 		const t = await taxInput(body(req), false);
 		const cols = Object.keys(t);
 		const { rows } = await q(
@@ -45,6 +48,7 @@ export function catalogRoutes(ctx, h) {
 	});
 
 	ctx.route("PUT", "/taxes/:id", async (req) => {
+		requireAdmin(req);
 		const tid = id(req, "id", "tax");
 		const t = await taxInput(body(req), true);
 		const cols = Object.keys(t);
@@ -58,13 +62,13 @@ export function catalogRoutes(ctx, h) {
 	});
 
 	ctx.route("DELETE", "/taxes/:id", async (req) => {
+		requireAdmin(req);
 		const tid = id(req, "id", "tax");
 		const used = await q(
 			`SELECT 1 FROM ${T("document_lines")} WHERE taxes @> jsonb_build_array(jsonb_build_object('id', $1::bigint)) LIMIT 1`,
 			[tid],
 		);
 		if (used.rowCount) throw conflict("this tax is used on documents; turn it off instead");
-		await q(`UPDATE ${T("settings")} SET default_tax_ids = array_remove(default_tax_ids, $1::int) WHERE id = 1`, [tid]);
 		await q(`UPDATE ${T("customers")} SET tax_ids = array_remove(tax_ids, $1::int) WHERE $1::int = ANY(tax_ids)`, [tid]);
 		await q(`UPDATE ${T("categories")} SET tax_ids = array_remove(tax_ids, $1::int) WHERE $1::int = ANY(tax_ids)`, [tid]);
 		const { rowCount } = await q(`DELETE FROM ${T("taxes")} WHERE id = $1`, [tid]);
@@ -119,6 +123,7 @@ export function catalogRoutes(ctx, h) {
 	});
 
 	ctx.route("POST", "/categories", async (req) => {
+		requireAdmin(req);
 		const c = await categoryInput(body(req), false);
 		const cols = Object.keys(c);
 		const { rows } = await q(
@@ -129,6 +134,7 @@ export function catalogRoutes(ctx, h) {
 	});
 
 	ctx.route("PUT", "/categories/:id", async (req) => {
+		requireAdmin(req);
 		const cid = id(req, "id", "category");
 		const c = await categoryInput(body(req), true);
 		const cols = Object.keys(c);
@@ -142,6 +148,7 @@ export function catalogRoutes(ctx, h) {
 	});
 
 	ctx.route("DELETE", "/categories/:id", async (req) => {
+		requireAdmin(req);
 		const cid = id(req, "id", "category");
 		const used = await q(`SELECT 1 FROM ${T("document_lines")} WHERE category_id = $1 LIMIT 1`, [cid]);
 		if (used.rowCount) throw conflict("this category is used on documents; turn it off instead");

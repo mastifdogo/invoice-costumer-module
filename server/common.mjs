@@ -90,9 +90,66 @@ export function helpers(ctx) {
 	/** "%", "_" and "\" are literal in searches. */
 	const like = (s) => `%${s.replace(/[\\%_]/g, "\\$&")}%`;
 
+	/**
+	 * The module's configuration: the values from Ledger's settings form
+	 * (ctx.settings), plus the running document numbers and default taxes
+	 * kept in the module's own tables. Read per request, so a saved form
+	 * applies straight away.
+	 */
 	async function loadSettings() {
-		const { rows } = await q(`SELECT * FROM ${T("settings")} WHERE id = 1`);
-		return rows[0];
+		const [v, counters, defaults] = await Promise.all([
+			ctx.settings.get(),
+			q(`SELECT next_invoice_number, next_quote_number, next_estimate_number FROM ${T("settings")} WHERE id = 1`),
+			q(`SELECT id::int AS id FROM ${T("taxes")} WHERE is_default ORDER BY position, id`),
+		]);
+		const str = (k) => (typeof v[k] === "string" ? v[k].trim() : "");
+		const num = (k, d) => (typeof v[k] === "number" ? v[k] : d);
+		const accounts = {};
+		for (const cur of CURRENCIES) {
+			const c = cur.toLowerCase();
+			accounts[cur] = { receivable: str(`receivable_account_${c}`), revenue: str(`revenue_account_${c}`), bank: str(`bank_account_${c}`) };
+		}
+		return {
+			...counters.rows[0],
+			business_name: str("business_name"),
+			business_address: str("business_address"),
+			business_email: str("business_email"),
+			business_phone: str("business_phone"),
+			tax_id_label: str("tax_id_label"),
+			tax_id: str("tax_id"),
+			footer: str("footer"),
+			invoice_prefix: str("invoice_prefix"),
+			quote_prefix: str("quote_prefix"),
+			estimate_prefix: str("estimate_prefix"),
+			default_currency: CURRENCIES.includes(v.default_currency) ? v.default_currency : "CAD",
+			default_terms_days: num("default_terms_days", 30),
+			quote_valid_days: num("quote_valid_days", 30),
+			estimate_valid_days: num("estimate_valid_days", 30),
+			quote_terms: str("quote_terms"),
+			estimate_terms: str("estimate_terms"),
+			default_tax_ids: defaults.rows.map((r) => r.id),
+			post_to_ledger: v.post_to_ledger === true,
+			accounts,
+			email_via: v.email_via === "smtp" ? "smtp" : "gmail",
+			smtp_host: str("smtp_host"),
+			smtp_port: num("smtp_port", 587),
+			smtp_security: ["tls", "starttls", "none"].includes(v.smtp_security) ? v.smtp_security : "starttls",
+			smtp_username: str("smtp_username"),
+			smtp_password: typeof v.smtp_password === "string" ? v.smtp_password : "",
+			from_name: str("from_name"),
+			from_email: str("from_email"),
+			reply_to: str("reply_to"),
+			bcc_self: v.bcc_self === true,
+			email_subject: str("email_subject"),
+			email_body: str("email_body"),
+			quote_email_subject: str("quote_email_subject"),
+			quote_email_body: str("quote_email_body"),
+		};
+	}
+
+	/** Module setup (taxes, categories, numbering) is for admins; bookkeepers do the day-to-day work. */
+	function requireAdmin(req) {
+		if (req.user?.role !== "admin") throw new ctx.HttpError(403, "only an admin can change this");
 	}
 
 	/** Checks that a ledger account exists, is active and is in the currency. */
@@ -130,5 +187,5 @@ export function helpers(ctx) {
 		return ids;
 	}
 
-	return { T, q, bad, notFound, conflict, body, text, intIn, bool, dateField, currency, decimal, rate, id, isId, idList, like, loadSettings, checkAccount, accountMap, checkTaxIds };
+	return { T, q, bad, notFound, conflict, body, text, intIn, bool, dateField, currency, decimal, rate, id, isId, idList, like, loadSettings, requireAdmin, checkAccount, accountMap, checkTaxIds };
 }
