@@ -133,8 +133,10 @@ const textarea = (name, value, attrs = {}) => {
 const select = (name, value, options, attrs = {}) =>
 	h("select", { name, ...attrs }, options.map(([v, label]) => h("option", { value: v, selected: String(v) === String(value ?? "") }, label)));
 const CURRENCY_OPTIONS = [["CAD", "CAD"], ["USD", "USD"]];
+// Tables scroll sideways inside narrow panes instead of widening the page.
+const scroll = (el) => h("div", { class: "scroll" }, el);
 const table = (heads, rows, attrs = {}) =>
-	h("table", attrs, h("thead", {}, h("tr", {}, heads.map((x) => (Array.isArray(x) ? h("th", { class: x[1] }, x[0]) : h("th", {}, x))))), h("tbody", {}, rows));
+	scroll(h("table", attrs, h("thead", {}, h("tr", {}, heads.map((x) => (Array.isArray(x) ? h("th", { class: x[1] }, x[0]) : h("th", {}, x))))), h("tbody", {}, rows)));
 
 function openDialog(...content) {
 	const d = document.getElementById("dialog");
@@ -221,7 +223,7 @@ const docHref = (d) => `#/${KINDS[d.kind].plural}/${d.id}`;
 
 const routes = [
 	[/^\/?$/, () => docList("invoice")],
-	[/^\/(invoices|quotes|estimates)$/, (m) => docList(kindByPlural[m[1]])],
+	[/^\/(invoices|quotes|estimates)$/, (m, qs) => docList(kindByPlural[m[1]], qs)],
 	[/^\/(invoices|quotes|estimates)\/new$/, (m, qs) => docForm(kindByPlural[m[1]], null, qs)],
 	[/^\/(invoices|quotes|estimates)\/(\d+)$/, (m) => docView(kindByPlural[m[1]], m[2])],
 	[/^\/(invoices|quotes|estimates)\/(\d+)\/edit$/, (m) => docForm(kindByPlural[m[1]], m[2])],
@@ -230,7 +232,6 @@ const routes = [
 	[/^\/customers\/(\d+)$/, (m) => customerView(m[1])],
 	[/^\/customers\/(\d+)\/edit$/, (m) => customerForm(m[1])],
 	[/^\/categories$/, () => categoryList()],
-	[/^\/settings$/, () => settingsView()],
 ];
 
 async function route() {
@@ -262,9 +263,10 @@ window.addEventListener("hashchange", () => {
 
 const listState = {};
 
-async function docList(kind) {
+async function docList(kind, qs = new URLSearchParams()) {
 	const K = KINDS[kind];
 	const state = (listState[kind] ??= { status: "", q: "" });
+	if (qs.has("status") && K.filters.some(([v]) => v === qs.get("status"))) state.status = qs.get("status");
 	const isInvoice = kind === "invoice";
 	const [summary, settings] = await Promise.all([isInvoice ? api("/summary") : null, api("/settings")]);
 
@@ -317,8 +319,8 @@ async function docList(kind) {
 	}
 	const hints = [];
 	if (isInvoice) {
-		if (!settings.business_name) hints.push(h("li", {}, h("a", { href: "#/settings" }, "Add your business details"), " (and GST number) so they appear on invoices."));
-		if (!settings.email_ready) hints.push(h("li", {}, h("a", { href: "#/settings" }, "Connect an email account"), " to send invoices, quotes and estimates."));
+		if (!settings.business_name) hints.push(h("li", {}, settingsLink("Add your business details"), " (and GST number) so they appear on invoices."));
+		if (!settings.email_ready) hints.push(h("li", {}, settings.email.problem, " ", settingsLink("Email settings"), "."));
 		if (Number(summary.customers) === 0) hints.push(h("li", {}, h("a", { href: "#/customers/new" }, "Add your first customer"), "."));
 	}
 
@@ -327,15 +329,17 @@ async function docList(kind) {
 		hints.length ? h("ul", { class: "muted" }, hints) : null,
 		cards.length ? h("div", { class: "cards" }, cards) : null,
 		h("div", { class: "filters" }, seg, search),
-		h(
-			"table",
-			{},
+		scroll(
 			h(
-				"thead",
+				"table",
 				{},
-				h("tr", {}, ["Number", "Customer", K.date, K.due, "Status"].map((x) => h("th", {}, x)), h("th", { class: "right" }, "Total"), isInvoice ? h("th", { class: "right" }, "Balance") : null),
+				h(
+					"thead",
+					{},
+					h("tr", {}, ["Number", "Customer", K.date, K.due, "Status"].map((x) => h("th", {}, x)), h("th", { class: "right" }, "Total"), isInvoice ? h("th", { class: "right" }, "Balance") : null),
+				),
+				tbody,
 			),
-			tbody,
 		),
 	);
 	await load();
@@ -401,13 +405,13 @@ async function docForm(kind, idOrNull, qs = new URLSearchParams()) {
 		const row = h(
 			"tr",
 			{},
-			h("td", { class: "cat" }, catSel),
-			h("td", {}, textarea("description", l.description ?? "", { rows: 1, placeholder: "Description", required: true })),
-			h("td", { class: "qty" }, input("quantity", l.quantity_text ?? "1", { inputmode: "decimal" })),
-			h("td", { class: "price" }, input("unit_price", l.unit_price_cents !== undefined ? fmtDec(l.unit_price_cents, 2) : "", { inputmode: "decimal", placeholder: "0.00" })),
-			h("td", { class: "tax" }, picker.el),
+			h("td", { class: "cat", "data-label": "Category" }, catSel),
+			h("td", { class: "desc" }, textarea("description", l.description ?? "", { rows: 1, placeholder: "Description", required: true })),
+			h("td", { class: "qty", "data-label": "Qty" }, input("quantity", l.quantity_text ?? "1", { inputmode: "decimal" })),
+			h("td", { class: "price", "data-label": "Unit price" }, input("unit_price", l.unit_price_cents !== undefined ? fmtDec(l.unit_price_cents, 2) : "", { inputmode: "decimal", placeholder: "0.00" })),
+			h("td", { class: "tax", "data-label": "Taxes" }, picker.el),
 			h("td", { class: "amount num" }, ""),
-			h("td", {}, h("button", { type: "button", class: "link", title: "Remove line", onclick: () => (row.remove(), recalc()) }, "✕")),
+			h("td", { class: "rm" }, h("button", { type: "button", class: "link", title: "Remove line", "aria-label": "Remove line", onclick: () => (row.remove(), recalc()) }, "✕")),
 		);
 		row._taxes = picker;
 		row._touched = Boolean(existing && l.description !== undefined);
@@ -473,14 +477,10 @@ async function docForm(kind, idOrNull, qs = new URLSearchParams()) {
 		),
 		h("h2", {}, "Lines"),
 		h(
-			"div",
-			{ class: "scroll" },
-			h(
-				"table",
-				{ class: "lines" },
-				h("thead", {}, h("tr", {}, h("th", {}, "Category"), h("th", {}, "Description"), h("th", {}, "Qty"), h("th", {}, "Unit price"), h("th", {}, "Taxes"), h("th", { class: "right" }, "Amount"), h("th"))),
-				linesBody,
-			),
+			"table",
+			{ class: "lines" },
+			h("thead", {}, h("tr", {}, h("th", {}, "Category"), h("th", {}, "Description"), h("th", {}, "Qty"), h("th", {}, "Unit price"), h("th", {}, "Taxes"), h("th", { class: "right" }, "Amount"), h("th"))),
+			linesBody,
 		),
 		h(
 			"div",
@@ -674,7 +674,7 @@ async function docView(kind, id) {
 async function sendDialog(doc, settings, done) {
 	const K = KINDS[doc.kind];
 	if (!settings.email_ready) {
-		flash("Set up email first: Settings → Email.", "error");
+		flash(settings.email.problem, "error");
 		return;
 	}
 	const d = await api(`/${K.plural}/${doc.id}/email`);
@@ -690,7 +690,7 @@ async function sendDialog(doc, settings, done) {
 		h(
 			"p",
 			{ class: "hint" },
-			`The ${K.label.toLowerCase()} PDF is attached. Sent from ${settings.from_email}${settings.bcc_self ? ", with a copy to you" : ""}.`,
+			`The ${K.label.toLowerCase()} PDF is attached. Sent from ${settings.email.from}${settings.email.via === "gmail" ? " (Gmail)" : ""}${settings.bcc_self ? ", with a copy to you" : ""}.`,
 			draftInvoice ? " Sending issues the draft first." : doc.status === "draft" ? " It will be marked as sent." : "",
 		),
 		h("div", { class: "actions" }, h("button", { class: "primary", type: "submit" }, "Send"), h("button", { type: "button", onclick: closeDialog }, "Cancel")),
@@ -773,7 +773,7 @@ async function customerList() {
 	render(
 		h("h1", {}, "Customers", h("span", { class: "spacer" }), h("a", { class: "button primary", href: "#/customers/new" }, "+ New customer")),
 		h("div", { class: "filters" }, search, h("label", { class: "check" }, arch, h("span", {}, "Show archived"))),
-		h("table", {}, h("thead", {}, h("tr", {}, ["Name", "Company", "Email", "Phone"].map((x) => h("th", {}, x)), h("th", { class: "right" }, "Invoices"), h("th", { class: "right" }, "Outstanding"))), tbody),
+		scroll(h("table", {}, h("thead", {}, h("tr", {}, ["Name", "Company", "Email", "Phone"].map((x) => h("th", {}, x)), h("th", { class: "right" }, "Invoices"), h("th", { class: "right" }, "Outstanding"))), tbody)),
 	);
 	await load();
 }
@@ -914,7 +914,7 @@ async function categoryList(range = {}) {
 	const reload = () => categoryList({ from: from.value, to: to.value }).catch(fail);
 	from.onchange = to.onchange = reload;
 	render(
-		h("h1", {}, "Categories", h("span", { class: "spacer" }), h("button", { class: "primary", onclick: () => categoryDialog(null, taxes.data, accounts, settings, reload) }, "+ New category")),
+		h("h1", {}, "Categories", h("span", { class: "spacer" }), settings.is_admin ? h("button", { class: "primary", onclick: () => categoryDialog(null, taxes.data, accounts, settings, reload) }, "+ New category") : null),
 		h("p", { class: "muted" }, "Each category tracks its sales to a revenue account. When an invoice is issued (with ledger posting on), each line's amount is credited to its category's account."),
 		h("div", { class: "filters" }, h("span", { class: "muted" }, "Sales from"), from, h("span", { class: "muted" }, "to"), to),
 		table(
@@ -929,7 +929,7 @@ async function categoryList(range = {}) {
 						h("td", {}, c.accounts.USD ?? h("span", { class: "muted" }, settings.accounts?.USD?.revenue ? `default (${settings.accounts.USD.revenue})` : "—")),
 						h("td", {}, taxName(c.tax_ids)),
 						h("td", { class: "num" }, sales(c.sales)),
-						h("td", { class: "right" }, h("button", { class: "link", onclick: () => categoryDialog(c, taxes.data, accounts, settings, reload) }, "Edit")),
+						h("td", { class: "right" }, settings.is_admin ? h("button", { class: "link", onclick: () => categoryDialog(c, taxes.data, accounts, settings, reload) }, "Edit") : null),
 					),
 				),
 				cats.uncategorized.length ? h("tr", {}, h("td", { class: "muted" }, "No category"), h("td"), h("td"), h("td"), h("td", { class: "num" }, sales(cats.uncategorized)), h("td")) : null,
@@ -957,7 +957,7 @@ function categoryDialog(cat, taxes, accounts, settings, done) {
 			field("Revenue account (CAD)", accountSelect("acct_CAD", accounts, "CAD", ["revenue"], c.accounts.CAD)),
 			field("Revenue account (USD)", accountSelect("acct_USD", accounts, "USD", ["revenue"], c.accounts.USD)),
 		),
-		h("p", { class: "hint" }, "Left empty, the default revenue account from Settings is used."),
+		h("p", { class: "hint" }, "Left empty, the default revenue account under Settings → Sales is used."),
 		h("label", { class: "check" }, customTaxes, h("span", {}, "Lines in this category get specific taxes")),
 		pickerWrap,
 		cat ? h("label", { class: "check" }, h("input", { type: "checkbox", name: "active", checked: c.active }), h("span", {}, "Active (offered on new lines)")) : null,
@@ -998,19 +998,13 @@ function categoryDialog(cat, taxes, accounts, settings, done) {
 	openDialog(form);
 }
 
-// ---- settings ----------------------------------------------------------------------------------
+// ---- setup (shown under the form on Ledger's Settings → Sales tab) ----------------------------
 
-const SMTP_PRESETS = {
-	gmail: { smtp_host: "smtp.gmail.com", smtp_port: 465, smtp_security: "tls", note: "Gmail / Google Workspace: turn on 2-Step Verification, then create an App Password (Google Account → Security → App passwords) and use it as the password. Username is your full address." },
-	outlook: { smtp_host: "smtp.office365.com", smtp_port: 587, smtp_security: "starttls", note: "Microsoft 365 / Outlook.com: SMTP AUTH must be enabled for the mailbox. Accounts with 2-step verification need an app password." },
-	fastmail: { smtp_host: "smtp.fastmail.com", smtp_port: 465, smtp_security: "tls", note: "Fastmail: create an app password under Settings → Privacy & Security → Integrations." },
-	icloud: { smtp_host: "smtp.mail.me.com", smtp_port: 587, smtp_security: "starttls", note: "iCloud Mail: use an app-specific password from appleid.apple.com. Username is your iCloud address." },
-	zoho: { smtp_host: "smtp.zoho.com", smtp_port: 465, smtp_security: "tls", note: "Zoho Mail: use an app-specific password if 2FA is on." },
-	local: { smtp_host: "localhost", smtp_port: 25, smtp_security: "none", note: "A relay on this container or your network (e.g. Postfix). Leave username and password empty if it doesn't need them." },
-};
+const SETTINGS_HREF = "/settings/m/sales";
+const settingsLink = (label = "Settings → Sales") => h("a", { href: SETTINGS_HREF, target: "_top" }, label);
 
 function taxDialog(tax, accounts, done) {
-	const t = tax ?? { name: "", rate: 0, accounts: {}, active: true };
+	const t = tax ?? { name: "", rate: 0, accounts: {}, active: true, is_default: false };
 	const form = h(
 		"form",
 		{ method: "dialog" },
@@ -1024,6 +1018,7 @@ function taxDialog(tax, accounts, done) {
 		),
 		h("p", { class: "hint" }, "Tax collected is credited to this account when an invoice is posted, e.g. 2200 GST/HST payable. Changing a rate doesn't change documents already saved."),
 		h("label", { class: "check" }, h("input", { type: "checkbox", name: "active", checked: t.active }), h("span", {}, "On (offered on lines)")),
+		h("label", { class: "check" }, h("input", { type: "checkbox", name: "is_default", checked: t.is_default }), h("span", {}, "Add to new lines by default")),
 		h(
 			"div",
 			{ class: "actions" },
@@ -1050,7 +1045,7 @@ function taxDialog(tax, accounts, done) {
 		e.preventDefault();
 		busy(e.submitter, async () => {
 			const o = formData(form);
-			const body = { name: o.name, rate: o.rate, active: o.active, accounts: { CAD: o.acct_CAD, USD: o.acct_USD } };
+			const body = { name: o.name, rate: o.rate, active: o.active, is_default: o.is_default, accounts: { CAD: o.acct_CAD, USD: o.acct_USD } };
 			await (tax ? api(`/taxes/${tax.id}`, { method: "PUT", body }) : api("/taxes", { method: "POST", body }));
 			closeDialog();
 			flash(`Tax ${o.name} saved.`);
@@ -1060,42 +1055,52 @@ function taxDialog(tax, accounts, done) {
 	openDialog(form);
 }
 
-async function settingsView() {
+/** Taxes, document numbering and the email check: what Ledger's settings form can't hold. */
+async function setupView() {
 	const [s, accounts, taxes] = await Promise.all([api("/settings"), loadAccounts(), api("/taxes")]);
-	const reload = () => settingsView().catch(fail);
-	const roles = { receivable: ["Accounts receivable", ["asset"]], revenue: ["Default revenue (lines without a category)", ["revenue"]], bank: ["Bank (payments go to)", ["asset"]] };
-	const acctFields = ["CAD", "USD"].map((cur) =>
-		h(
-			"div",
-			{},
-			h("strong", {}, cur),
-			h("div", { class: "grid", style: "margin-top:0.4rem" }, Object.entries(roles).map(([role, [label, types]]) => field(label, accountSelect(`acct.${cur}.${role}`, accounts, cur, types, s.accounts?.[cur]?.[role] ?? "")))),
-		),
-	);
-	const defaultTaxes = taxPicker(taxes.data, s.default_tax_ids);
-	const note = h("p", { class: "hint" });
-	const preset = select("preset", "", [["", "Fill in for a provider…"], ["gmail", "Gmail / Google Workspace"], ["outlook", "Microsoft 365 / Outlook"], ["fastmail", "Fastmail"], ["icloud", "iCloud Mail"], ["zoho", "Zoho Mail"], ["local", "Local relay (no login)"]]);
-	const numbering = (kind, label) => [field(`${label} prefix`, input(`${kind}_prefix`, s[`${kind}_prefix`], { maxlength: 20 })), field(`Next ${label.toLowerCase()} number`, input(`next_${kind}_number`, s[`next_${kind}_number`], { type: "number", min: 1 }))];
+	const reload = () => setupView().catch(fail);
+	const admin = s.is_admin;
+	const edit = (t) => (admin ? h("button", { type: "button", class: "link", onclick: () => taxDialog(t, accounts, reload) }, "Edit") : null);
 
-	const form = h(
+	const numbering = h(
 		"form",
 		{ autocomplete: "off" },
 		h(
-			"fieldset",
-			{},
-			h("legend", {}, "Your business (shown on documents)"),
-			h(
-				"div",
-				{ class: "grid" },
-				field("Business name", input("business_name", s.business_name, { maxlength: 200 })),
-				field("Email", input("business_email", s.business_email, { type: "email" })),
-				field("Phone", input("business_phone", s.business_phone, { maxlength: 50 })),
-				field("Tax number label", input("tax_id_label", s.tax_id_label, { maxlength: 30 })),
-				field("GST/HST registration number", input("tax_id", s.tax_id, { maxlength: 50, placeholder: "e.g. 123456789RT0001" })),
-				field("Address", textarea("business_address", s.business_address, { rows: 3 }), "wide"),
-				field("Footer (payment instructions, thanks…)", textarea("footer", s.footer, { rows: 3 }), "wide"),
+			"div",
+			{ class: "grid" },
+			["invoice", "quote", "estimate"].map((k) =>
+				field(`Next ${k} number`, input(`next_${k}_number`, s[`next_${k}_number`], { type: "number", min: 1, disabled: !admin })),
 			),
 		),
+		h(
+			"p",
+			{ class: "hint" },
+			`Next numbers: ${s.invoice_prefix}${String(s.next_invoice_number).padStart(4, "0")}, ${s.quote_prefix}${String(s.next_quote_number).padStart(4, "0")}, ${s.estimate_prefix}${String(s.next_estimate_number).padStart(4, "0")}. The prefixes are in the form above. Numbers already used are skipped.`,
+		),
+		admin ? h("div", { class: "actions" }, h("button", { class: "primary", type: "submit" }, "Save numbering")) : null,
+	);
+	numbering.onsubmit = (e) => {
+		e.preventDefault();
+		busy(e.submitter, async () => {
+			await api("/numbering", { method: "PUT", body: formData(numbering) });
+			flash("Numbering saved.");
+			reload();
+		});
+	};
+
+	const em = s.email;
+	render(
+		h(
+			"fieldset",
+			{},
+			h("legend", {}, "Email"),
+			em.ready
+				? h("p", {}, em.via === "gmail" ? `Sending through Ledger's Gmail account (${em.from}).` : `Sending through your mail server as ${em.from}.`)
+				: h("p", { style: "color:var(--warn)" }, em.problem),
+			h("p", { class: "hint" }, "Choose Gmail or your own mail server in the form above. Gmail is connected, and Sales allowed to send, under ", h("a", { href: "/settings/gmail", target: "_top" }, "Settings → Gmail"), "."),
+			h("div", { class: "actions" }, h("button", { type: "button", disabled: !em.ready, onclick: (e) => busy(e.currentTarget, testEmail) }, "Send a test email")),
+		),
+		h("fieldset", {}, h("legend", {}, "Numbering"), numbering),
 		h(
 			"fieldset",
 			{},
@@ -1107,127 +1112,39 @@ async function settingsView() {
 					h(
 						"tr",
 						{},
-						h("td", {}, h("strong", {}, t.name)),
+						h("td", {}, h("strong", {}, t.name), t.is_default ? h("span", { class: "muted" }, " (default)") : null),
 						h("td", { class: "num" }, pct(t.rate)),
 						h("td", {}, t.accounts.CAD ?? h("span", { class: "muted" }, "—")),
 						h("td", {}, t.accounts.USD ?? h("span", { class: "muted" }, "—")),
 						h("td", {}, t.active ? "on" : h("span", { class: "muted" }, "off")),
-						h("td", { class: "right" }, h("button", { type: "button", class: "link", onclick: () => taxDialog(t, accounts, reload) }, "Edit")),
+						h("td", { class: "right" }, edit(t)),
 					),
 				),
 			),
-			h("div", { class: "actions" }, h("button", { type: "button", onclick: () => taxDialog(null, accounts, reload) }, "+ Add tax")),
-			h("div", {}, h("span", { class: "muted" }, "Taxes on new lines by default: "), defaultTaxes.el),
+			admin ? h("div", { class: "actions" }, h("button", { type: "button", onclick: () => taxDialog(null, accounts, reload) }, "+ Add tax")) : null,
 		),
-		h(
-			"fieldset",
-			{},
-			h("legend", {}, "Numbering and defaults"),
-			h(
-				"div",
-				{ class: "grid" },
-				numbering("invoice", "Invoice"),
-				numbering("quote", "Quote"),
-				numbering("estimate", "Estimate"),
-				field("Default currency", select("default_currency", s.default_currency, CURRENCY_OPTIONS)),
-				field("Invoice payment terms (days)", input("default_terms_days", s.default_terms_days, { type: "number", min: 0, max: 365 })),
-				field("Quotes valid for (days)", input("quote_valid_days", s.quote_valid_days, { type: "number", min: 0, max: 365 })),
-				field("Estimates valid for (days)", input("estimate_valid_days", s.estimate_valid_days, { type: "number", min: 0, max: 365 })),
-				field("Terms printed on quotes", textarea("quote_terms", s.quote_terms, { rows: 2 }), "wide"),
-				field("Terms printed on estimates", textarea("estimate_terms", s.estimate_terms, { rows: 2 }), "wide"),
-			),
-		),
-		h(
-			"fieldset",
-			{},
-			h("legend", {}, "Ledger posting"),
-			h("label", { class: "check" }, h("input", { type: "checkbox", name: "post_to_ledger", checked: s.post_to_ledger }), h("span", {}, "Post invoices and payments to the books")),
-			h(
-				"p",
-				{ class: "hint" },
-				"Issuing an invoice posts Dr receivable / Cr each line's category revenue account and each tax's account. A payment posts Dr bank / Cr receivable. Voiding reverses the invoice's entry. Quotes and estimates are never posted.",
-			),
-			accounts.length ? acctFields : h("p", { class: "muted" }, "No accounts in Ledger yet."),
-		),
-		h(
-			"fieldset",
-			{},
-			h("legend", {}, "Email (SMTP)"),
-			h("div", { class: "grid" }, field("Provider", preset)),
-			note,
-			h(
-				"div",
-				{ class: "grid", style: "margin-top:0.5rem" },
-				field("SMTP server", input("smtp_host", s.smtp_host, { placeholder: "smtp.example.com" })),
-				field("Port", input("smtp_port", s.smtp_port, { type: "number", min: 1, max: 65535 })),
-				field("Security", select("smtp_security", s.smtp_security, [["tls", "TLS (usually port 465)"], ["starttls", "STARTTLS (usually port 587)"], ["none", "None (local relay only)"]])),
-				field("Username", input("smtp_username", s.smtp_username, { autocomplete: "off" })),
-				field("Password", input("smtp_password", "", { type: "password", autocomplete: "new-password", placeholder: s.smtp_password_set ? "saved — leave empty to keep" : "" })),
-				field("Send from (address)", input("from_email", s.from_email, { type: "email", placeholder: "billing@example.com" })),
-				field("Sender name", input("from_name", s.from_name, { placeholder: s.business_name })),
-				field("Reply-to (optional)", input("reply_to", s.reply_to, { type: "email" })),
-				h("label", { class: "check" }, h("input", { type: "checkbox", name: "bcc_self", checked: s.bcc_self }), h("span", {}, "Send me a copy (Bcc)")),
-			),
-			h("h2", {}, "Invoice email"),
-			h("div", { class: "grid" }, field("Subject", input("email_subject", s.email_subject, { maxlength: 300 }), "wide"), field("Message", textarea("email_body", s.email_body, { rows: 6 }), "wide")),
-			h("h2", {}, "Quote and estimate email"),
-			h("div", { class: "grid" }, field("Subject", input("quote_email_subject", s.quote_email_subject, { maxlength: 300 }), "wide"), field("Message", textarea("quote_email_body", s.quote_email_body, { rows: 6 }), "wide")),
-			h("p", { class: "hint" }, "Placeholders: {{type}} {{type_lower}} {{number}} {{customer}} {{company}} {{total}} {{balance}} {{issue_date}} {{due_date}} {{valid_until}} {{business}}"),
-		),
-		h(
-			"div",
-			{ class: "actions" },
-			h("button", { class: "primary", type: "submit" }, "Save settings"),
-			h("button", { type: "button", onclick: (e) => busy(e.currentTarget, testEmail) }, "Send a test email"),
-			s.smtp_password_set ? h("button", { type: "button", class: "link", onclick: (e) => busy(e.currentTarget, clearPassword) }, "Forget saved password") : null,
-		),
+		admin ? null : h("p", { class: "muted" }, "Only an admin can change these."),
 	);
-	preset.onchange = () => {
-		const p = SMTP_PRESETS[preset.value];
-		note.textContent = p?.note ?? "";
-		if (!p) return;
-		form.smtp_host.value = p.smtp_host;
-		form.smtp_port.value = p.smtp_port;
-		form.smtp_security.value = p.smtp_security;
-	};
-
-	function collect() {
-		const o = formData(form);
-		const out = { accounts: { CAD: {}, USD: {} }, default_tax_ids: defaultTaxes.get() };
-		for (const [k, v] of Object.entries(o)) {
-			if (k === "preset") continue;
-			if (k.startsWith("acct.")) {
-				const [, cur, role] = k.split(".");
-				out.accounts[cur][role] = v;
-			} else out[k] = v;
-		}
-		if (!accounts.length) delete out.accounts;
-		if (out.smtp_password === "") delete out.smtp_password; // keep the saved one
-		return out;
-	}
-	const saveAll = () => api("/settings", { method: "PUT", body: collect() });
 	async function testEmail() {
-		await saveAll();
-		const to = prompt("Send a test email to:", form.from_email.value || form.business_email.value);
+		const to = prompt("Send a test email to:", em.from || s.business_email);
 		if (!to) return;
 		const r = await api("/settings/test-email", { method: "POST", body: { to } });
-		flash(`Test email sent to ${r.to.join(", ")}. Server said: ${r.server_reply}`);
+		flash(`Test email sent to ${r.to.join(", ")}. ${r.server_reply}`);
 	}
-	async function clearPassword() {
-		if (!confirm("Forget the saved SMTP password?")) return;
-		await api("/settings", { method: "PUT", body: { smtp_password: "" } });
-		flash("Saved password removed.");
-		reload();
-	}
-	form.onsubmit = (e) => {
-		e.preventDefault();
-		busy(e.submitter, async () => {
-			await saveAll();
-			flash("Settings saved.");
-			reload();
-		});
-	};
-	render(h("h1", {}, "Settings"), form);
 }
 
-route();
+// ---- start ----------------------------------------------------------------------------------------
+
+// Ledger's search bar and dashboard link to /apps/sales?open=invoices/31; the
+// value becomes this page's route.
+function openFromQuery() {
+	const open = new URLSearchParams(location.search).get("open") ?? "";
+	if (/^[a-z]+(\/\d+)?(\?[a-z_]+=[a-z0-9_]+)?$/.test(open) && !location.hash) history.replaceState(null, "", `${location.pathname}#/${open}`);
+}
+
+if (document.body.dataset.page === "setup") {
+	setupView().catch(fail);
+} else {
+	openFromQuery();
+	route();
+}

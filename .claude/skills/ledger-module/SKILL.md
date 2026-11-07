@@ -63,6 +63,12 @@ prints the session cookie). If PostgreSQL has no password yet:
 
 ## 4. Release (only when the user asks)
 
+**Never push to the Ledger repository (`mastifdogo/Bookeeping`) while
+working on this module.** Push only to this repository. If the module needs
+a change in Ledger (a bug fix, a new `ctx` feature, a docs or checker fix),
+make it in a local Ledger checkout, tell the user what it is and why, and
+leave pushing it to them. The module must work without that change.
+
 1. Bump `version` in `ledger-module.json` (and note the change in the README).
 2. Commit, tag `v<version>`, push the tag, and create a GitHub Release from
    it (not a draft or pre-release). If tags or releases can't be created from
@@ -77,16 +83,22 @@ and sales categories that map to revenue accounts; PDFs; posts invoices and
 payments to the books.
 
 - Layout: `server.mjs` registers the route files in `server/` (`catalog`,
-  `customers`, `documents`, `email`, `settings`, `common`); `lib/` has
-  `money.mjs`, `pdf.mjs` (PDF generation, no dependencies) and `mail.mjs`
-  (its own SMTP client). Tests: `test/*.test.mjs` (`npm test`).
-- Settings live in the module's own tables (`GET/PUT /settings`), not in
-  manifest `settings`.
+  `customers`, `documents`, `email`, `settings`, `search`, `dashboard`,
+  `move-settings`, `common`); `lib/` has `money.mjs`, `pdf.mjs` (PDF
+  generation, no dependencies) and `mail.mjs` (its own SMTP client). Tests:
+  `test/*.test.mjs` (`npm test`).
+- Needs Ledger ≥ 0.10.0. Settings are the manifest's `settings.fields`
+  (Ledger's form under Settings → Sales), read through `loadSettings()` in
+  `server/common.mjs`. What a form can't hold (taxes, next document numbers,
+  the email check) is `ui/setup.html`, shown under the form. The module's
+  own `settings` table now only keeps the running numbers; values from
+  before 0.2.0 are copied into Ledger's form once (`move-settings.mjs`).
+- Email: `ctx.gmail.send()` by default (an admin allows Sales under
+  Settings → Gmail), the module's own SMTP client when the user chooses it.
+- Taxes, categories and numbering are admin-only (`requireAdmin`).
+- Search (`ctx.search.provide`) and dashboard items link to
+  `/apps/sales?open=<route>`; the page turns `?open=` into its hash route.
+  Ledger forwards the query string to the page from 0.10.1; on 0.10.0 the
+  links open the Sales start page.
 - Known follow-ups:
-  - Email goes out over the module's own SMTP settings. Once Ledger 0.10.0
-    is the minimum, prefer `ctx.gmail.send()` (with attachments) when Gmail
-    is connected and the module is allowed to send, keeping SMTP as the
-    fallback for other providers.
-  - Expose invoices, quotes and customers with `ctx.search.provide`.
-  - The checker warns that `ui/index.html` has no dark mode.
-  - `nav.icon` is `hammer`; a drawn icon (Ledger ≥ 0.9.1) would say "sales".
+  - `nav.icon` is `hammer` because the user asked for it; keep it.
