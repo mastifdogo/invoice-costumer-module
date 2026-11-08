@@ -71,9 +71,14 @@ make it in a local Ledger checkout, tell the user what it is and why, and
 leave pushing it to them. The module must work without that change.
 
 1. Bump `version` in `ledger-module.json` (and note the change in the README).
-2. Commit, tag `v<version>`, push the tag, and create a GitHub Release from
-   it (not a draft or pre-release). If tags or releases can't be created from
-   this session, tell the user which commit to release in GitHub's web UI.
+2. Commit and get it onto `main` (pull request and merge). **Don't create
+   tags or Releases by hand**: `.github/workflows/release.yml` tags
+   `v<version>` and creates the Release on each push to `main` that changes
+   `ledger-module.json`, if that version isn't released yet. Check the run
+   in the Actions tab; Actions → Release → Run workflow re-runs it without a
+   change. If it fails with "Resource not accessible by integration", the
+   user allows it once: Settings → Actions → General → Workflow permissions
+   → "Read and write permissions".
 3. Ledger installs it on its update schedule or with "Update modules now"
    (Settings → Modules).
 

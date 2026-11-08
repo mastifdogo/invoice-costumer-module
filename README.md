@@ -216,7 +216,12 @@ Add `--serve 8098` to keep it running and try it in a browser.
 ## Releasing
 
 Bump `version` in `ledger-module.json`: new features raise the middle
-number (`0.3.0` → `0.4.0`), fixes only the last (`0.3.0` → `0.3.1`). Tag it
-(`git tag v0.4.0 && git push origin v0.4.0`) and create a GitHub Release
-from the tag (not a draft or pre-release). Ledger installs it on its update schedule, or straight away
-with **Update modules now** under Settings → Modules.
+number (`0.4.0` → `0.5.0`), fixes only the last (`0.4.0` → `0.4.1`), and
+merge it into `main`. The **Release** workflow
+(`.github/workflows/release.yml`) then creates the tag `v<version>` and the
+GitHub Release by itself; don't tag by hand. If it fails with "Resource not
+accessible by integration", allow it once under the repository's Settings →
+Actions → General → Workflow permissions ("Read and write permissions"),
+then Actions → Release → Run workflow. Ledger installs the release on its
+update schedule, or straight away with **Update modules now** under
+Settings → Modules.
