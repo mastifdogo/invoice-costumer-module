@@ -30,7 +30,10 @@ in Ledger's sidebar as **Sales**, with a hammer icon, and lets you:
   a statement) to the invoices they pay: exact matches by amount or invoice
   number, and, when an admin allows Sales under **Settings → AI**, Ledger's
   AI for the rest (one deposit paying several invoices, vague descriptions).
-  You apply each suggestion yourself. Applying never counts the money twice:
+  Matches are saved as suggestions on the **Payments** tab (and the
+  dashboard shows how many wait): change the amounts if needed, then
+  **Apply** or **Reject**. Nothing is applied until a person approves it; a
+  rejected deposit isn't suggested again. Applying never counts the money twice:
   a deposit credited to receivable is just linked; one sitting in another
   account (e.g. suspense) is moved to receivable with one entry.
 - **put reminders on Ledger's dashboard**: a notification when invoices are
@@ -155,8 +158,10 @@ login:
 - invoices also have `/:id/issue`, `/:id/void` and `/:id/payments`
 - quotes and estimates also have `/:id/mark-sent`, `/:id/accept`,
   `/:id/decline`, `/:id/reopen` and `/:id/convert`
-- `customers/:id/payments` (receive a payment), `payments/match` (suggest
-  deposit matches; records nothing), `payments/apply` (apply a deposit)
+- `customers/:id/payments` (receive a payment), `payments/match` (look for
+  deposit matches and save them as suggestions), `payments/suggestions`
+  (list; `/:id/apply` with optional changed amounts, `/:id/reject`),
+  `payments/apply` (apply a deposit the user picked)
 - `customers`, `categories`, `taxes`, `settings` (read-only), `numbering`,
   `settings/test-email`, `summary`
 - Changing taxes, categories or numbering needs the admin role.

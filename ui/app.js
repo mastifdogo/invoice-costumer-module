@@ -232,6 +232,7 @@ const routes = [
 	[/^\/customers\/(\d+)$/, (m) => customerView(m[1])],
 	[/^\/customers\/(\d+)\/edit$/, (m) => customerForm(m[1])],
 	[/^\/categories$/, () => categoryList()],
+	[/^\/payments$/, () => paymentsView()],
 ];
 
 async function route() {
@@ -1002,9 +1003,83 @@ function receivePaymentDialog(c, invoices, done) {
 }
 
 /**
- * Suggests which open invoices recent bank deposits pay (rules, plus Ledger's
- * AI when an admin allows it) and applies the ones the user accepts.
+ * One suggested match, for a person to review: the amounts can be changed
+ * (0 leaves an invoice out), then Apply or Reject. Nothing happens otherwise.
  */
+function suggestionCard(sug, { showCustomer = true, onDecided = () => {} } = {}) {
+	const status = h("div", { class: "actions" });
+	const inputs = sug.allocations.map((a) => {
+		const inp = input(`amt_${a.invoice_id}`, fmtDec(a.amount_cents, 2), { inputmode: "decimal", style: "max-width:7rem", "aria-label": `Amount for ${a.number}` });
+		return { a, inp };
+	});
+	// Paid some other way since it was suggested: say so instead of letting Apply fail.
+	const stale = sug.allocations.filter((a) => a.status !== "open" || BigInt(a.balance_cents) < BigInt(a.amount_cents));
+	const decide = (what, fn) =>
+		h("button", {
+			class: what === "Apply" && sug.confidence === "high" && !stale.length ? "primary" : what === "Reject" ? "danger" : "",
+			disabled: what === "Apply" && stale.length > 0,
+			onclick: (e) => busy(e.currentTarget, fn),
+		}, what);
+	status.append(
+		decide("Apply", async () => {
+			const allocations = inputs.map(({ a, inp }) => ({ invoice_id: a.invoice_id, amount: inp.value.trim() || "0" })).filter((x) => parseDec(x.amount, 2) !== 0n);
+			await api(`/payments/suggestions/${sug.id}/apply`, { method: "POST", body: { allocations } });
+			status.replaceChildren(h("span", { style: "color:var(--ok)" }, "Applied."));
+			onDecided();
+		}),
+		decide("Reject", async () => {
+			await api(`/payments/suggestions/${sug.id}/reject`, { method: "POST", body: {} });
+			status.replaceChildren(h("span", { class: "muted" }, "Rejected. This deposit won't be suggested again."));
+			onDecided();
+		}),
+	);
+	return h(
+		"div",
+		{ class: "card", style: "margin-bottom:0.6rem" },
+		h(
+			"div",
+			{},
+			h("strong", {}, money(sug.remaining_cents, sug.currency)),
+			" deposited ",
+			sug.date,
+			" ",
+			h("span", { class: `badge ${sug.confidence === "high" ? "paid" : sug.confidence === "medium" ? "open" : "draft"}` }, `${sug.confidence}${sug.source === "ai" ? " · AI" : ""}`),
+		),
+		h("div", { class: "muted" }, sug.description || "(no description)", sug.reference ? ` · ref ${sug.reference}` : ""),
+		sug.reason ? h("div", { class: "hint" }, sug.source === "ai" ? "AI: " : "", sug.reason) : null,
+		stale.length
+			? h(
+					"p",
+					{ style: "color:var(--warn);margin:0.4rem 0 0" },
+					`${stale.map((a) => `${a.number} is ${a.status === "open" ? "partly paid" : a.status}`).join(", ")} since this was suggested. Reject it, or look for new matches.`,
+				)
+			: null,
+		scroll(
+			h(
+				"table",
+				{ style: "margin-top:0.4rem" },
+				h("tbody", {}, inputs.map(({ a, inp }) =>
+					h(
+						"tr",
+						{},
+						h("td", {}, h("a", { href: `#/invoices/${a.invoice_id}`, target: "_blank" }, a.number), showCustomer && a.customer ? h("div", { class: "muted" }, a.customer) : null),
+						h("td", { class: "num muted" }, `due ${money(a.balance_cents)}`),
+						h("td", { class: "right" }, inp),
+					),
+				)),
+			),
+		),
+		status,
+	);
+}
+
+function aiNote(ai) {
+	if (!ai) return "";
+	if (ai.used) return "Matches marked AI were suggested by Ledger's AI. Check each one; nothing is applied until you approve it.";
+	return ai.problem ? `Only exact matches were looked for. ${ai.problem}` : "";
+}
+
+/** Looks for matches (saved as suggestions to review) and shows them in a dialog. */
 async function matchDepositsDialog({ customer = null } = {}, done) {
 	const list = h("div", {}, h("p", { class: "muted" }, "Looking through recent bank deposits…"));
 	const note = h("p", { class: "hint" });
@@ -1013,7 +1088,7 @@ async function matchDepositsDialog({ customer = null } = {}, done) {
 		h("h2", {}, customer ? `Deposits that may be from ${customer.name}` : "Deposits that may pay open invoices"),
 		note,
 		list,
-		h("div", { class: "actions" }, h("button", { type: "button", onclick: closeDialog }, "Close")),
+		h("div", { class: "actions" }, h("a", { class: "button", href: "#/payments", onclick: closeDialog }, "All suggestions"), h("button", { type: "button", onclick: closeDialog }, "Close")),
 	);
 	d.addEventListener("close", () => changed && done(), { once: true });
 	let r;
@@ -1023,40 +1098,44 @@ async function matchDepositsDialog({ customer = null } = {}, done) {
 		list.replaceChildren(h("p", { style: "color:var(--danger)" }, e.message));
 		return;
 	}
-	note.textContent =
-		`Checked ${r.deposits_checked} deposit${r.deposits_checked === 1 ? "" : "s"} from the last 90 days against ${r.open_invoices} open invoice${r.open_invoices === 1 ? "" : "s"}. ` +
-		(r.ai.used ? "Matches marked AI were suggested by Ledger's AI: check them before applying." : r.ai.problem ? `Only exact matches were checked. ${r.ai.problem}` : "");
-	if (!r.suggestions.length) {
-		list.replaceChildren(h("p", { class: "muted" }, "No likely matches. Record payments on the invoice, or use Receive payment."));
-		return;
-	}
+	note.textContent = `Checked ${r.deposits_checked} deposit${r.deposits_checked === 1 ? "" : "s"} from the last 90 days against ${r.open_invoices} open invoice${r.open_invoices === 1 ? "" : "s"}. ${aiNote(r.ai)}`;
 	list.replaceChildren(
-		...r.suggestions.map((sug) => {
-			const status = h("div", { class: "actions" });
-			const apply = h("button", {
-				class: sug.confidence === "high" ? "primary" : "",
-				onclick: (e) =>
-					busy(e.currentTarget, async () => {
-						await api("/payments/apply", {
-							method: "POST",
-							body: { entry_id: sug.entry_id, line_id: sug.line_id, allocations: sug.allocations.map((a) => ({ invoice_id: a.invoice_id, amount: fmtDec(a.amount_cents, 2) })) },
-						});
-						changed = true;
-						status.replaceChildren(h("span", { style: "color:var(--ok)" }, "Applied."));
-					}),
-			}, "Apply");
-			status.append(apply);
-			return h(
-				"div",
-				{ class: "card", style: "margin-bottom:0.6rem" },
-				h("div", {}, h("strong", {}, money(sug.remaining_cents, sug.currency)), " deposited ", sug.date, " ", h("span", { class: `badge ${sug.confidence === "high" ? "paid" : sug.confidence === "medium" ? "open" : "draft"}` }, `${sug.confidence}${sug.source === "ai" ? " · AI" : ""}`)),
-				h("div", { class: "muted" }, sug.description || "(no description)", sug.reference ? ` · ref ${sug.reference}` : ""),
-				h("div", { style: "margin-top:0.3rem" }, "Pays ", sug.allocations.map((a, i) => [i ? ", " : "", h("a", { href: `#/invoices/${a.invoice_id}`, target: "_blank" }, a.number), ` ${money(a.amount_cents)}`, customer ? "" : ` (${a.customer})`])),
-				sug.reason ? h("div", { class: "hint" }, sug.reason) : null,
-				status,
-			);
-		}),
+		...(r.suggestions.length
+			? r.suggestions.map((sug) => suggestionCard(sug, { showCustomer: !customer, onDecided: () => (changed = true) }))
+			: [h("p", { class: "muted" }, "No likely matches. Record payments on the invoice, or use Receive payment.")]),
 	);
+}
+
+/** Payments tab: suggested deposit matches waiting for a person to approve or reject them. */
+async function paymentsView() {
+	const [{ data }, settings] = await Promise.all([api("/payments/suggestions"), api("/settings")]);
+	const note = h("p", { class: "hint" });
+	const list = h("div");
+	const draw = (items) =>
+		list.replaceChildren(
+			...(items.length
+				? items.map((sug) => suggestionCard(sug, { onDecided: () => {} }))
+				: [h("p", { class: "muted" }, "No suggestions waiting. Look for new matches to check recent bank deposits against open invoices.")]),
+		);
+	const look = h("button", {
+		class: "primary",
+		onclick: (e) =>
+			busy(e.currentTarget, async () => {
+				const r = await api("/payments/match", { method: "POST", body: {} });
+				note.textContent = `Checked ${r.deposits_checked} deposit${r.deposits_checked === 1 ? "" : "s"} against ${r.open_invoices} open invoice${r.open_invoices === 1 ? "" : "s"}; ${r.found} match${r.found === 1 ? "" : "es"} found. ${aiNote(r.ai)}`;
+				draw(r.suggestions);
+			}),
+	}, "Look for new matches");
+	note.textContent = settings.ai?.available
+		? "Matches come from exact rules and from Ledger's AI. Nothing is applied until you approve it."
+		: `Matches come from exact rules (amount, invoice number). ${settings.ai?.problem ?? ""}`;
+	render(
+		h("h1", {}, "Payments to review", h("span", { class: "spacer" }), look),
+		h("p", { class: "muted" }, "Bank deposits already in the books that may pay open invoices. Change an amount if it's not right, then Apply, or Reject it if the deposit isn't a payment for these invoices."),
+		note,
+		list,
+	);
+	draw(data);
 }
 
 // ---- categories ----------------------------------------------------------------------------------

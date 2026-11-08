@@ -44,6 +44,17 @@ export function dashboardSync(ctx, h) {
 				todos.set(`follow-up-${r.id}`, { title: `Follow up on ${label} ${r.number} for ${r.customer}`.slice(0, 200), body: `Valid until ${r.due_date}.`, due: r.due_date, link: openLink(`${KINDS[r.kind].plural}/${r.id}`) });
 			}
 		}
+		// AI and rule matches wait for a person to review them.
+		const pending = await q(`SELECT count(*)::int AS n FROM ${T("payment_suggestions")} WHERE status = 'pending'`);
+		const n = pending.rows[0]?.n ?? 0;
+		if (n > 0) {
+			todos.set("payment-suggestions", {
+				title: `${n} payment suggestion${n === 1 ? "" : "s"} to review`,
+				body: "Bank deposits that may pay open invoices. Nothing is applied until someone approves it.",
+				due: null,
+				link: openLink("payments"),
+			});
+		}
 		return todos;
 	}
 
@@ -87,7 +98,7 @@ export function dashboardSync(ctx, h) {
 		// A to-do whose document moved on (emailed, decided, deleted) is done.
 		for (const i of existing) {
 			if (wanted.has(i.key) || i.closed_at) continue;
-			if (/^(send|follow-up)-\d+$/.test(i.key)) await d.complete(i.key);
+			if (/^(send|follow-up)-\d+$/.test(i.key) || i.key === "payment-suggestions") await d.complete(i.key);
 		}
 	}
 

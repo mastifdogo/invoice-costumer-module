@@ -113,6 +113,9 @@ export function paymentRoutes(ctx, h, docs) {
 		const posted = new Set(ours.rows.map((r) => String(r.journal_entry_id)));
 		const matched = await q(`SELECT matched_line_id, sum(amount_cents)::bigint AS cents FROM ${T("payments")} WHERE matched_line_id IS NOT NULL GROUP BY matched_line_id`);
 		const used = new Map(matched.rows.map((r) => [String(r.matched_line_id), BigInt(r.cents)]));
+		// Someone said a suggestion for this deposit was wrong: don't suggest it again.
+		const rejected = await q(`SELECT DISTINCT line_id FROM ${T("payment_suggestions")} WHERE status = 'rejected'`);
+		const skip = new Set(rejected.rows.map((r) => String(r.line_id)));
 		const out = [];
 		for (const [currency, a] of Object.entries(s.accounts)) {
 			if (!a.bank) continue;
@@ -124,7 +127,7 @@ export function paymentRoutes(ctx, h, docs) {
 			}
 			for (const l of ledger.lines) {
 				const debit = BigInt(l.debit_cents ?? 0);
-				if (debit <= 0n || posted.has(String(l.journal_entry_id))) continue;
+				if (debit <= 0n || posted.has(String(l.journal_entry_id)) || skip.has(String(l.line_id))) continue;
 				const remaining = debit - (used.get(String(l.line_id)) ?? 0n);
 				if (remaining <= 0n) continue;
 				out.push({
@@ -259,7 +262,47 @@ export function paymentRoutes(ctx, h, docs) {
 		return out;
 	}
 
-	// Suggests which open invoices recent bank deposits pay. Nothing is recorded.
+	/** Pending suggestions with the invoices they'd pay; optionally only those touching one customer. */
+	async function listSuggestions(customerId = null) {
+		const { rows } = await q(
+			`SELECT id, entry_id, line_id, currency, deposit_date::text AS date, description, reference, deposit_cents, allocations,
+			        confidence, source, reason, created_by, created_at
+			   FROM ${T("payment_suggestions")} WHERE status = 'pending' ORDER BY deposit_date DESC, id DESC LIMIT 200`,
+		);
+		const ids = [...new Set(rows.flatMap((r) => r.allocations.map((a) => String(a.invoice_id))))];
+		const invs = ids.length
+			? (
+					await q(
+						`SELECT d.id, d.number, d.status, d.customer_id, d.total_cents - d.paid_cents AS balance_cents, c.name AS customer
+						   FROM ${T("documents")} d JOIN ${T("customers")} c ON c.id = d.customer_id WHERE d.id = ANY($1::bigint[])`,
+						[ids],
+					)
+				).rows
+			: [];
+		const byId = new Map(invs.map((i) => [String(i.id), i]));
+		return rows
+			.map((r) => ({
+				...r,
+				remaining_cents: r.deposit_cents,
+				allocations: r.allocations.map((a) => {
+					const i = byId.get(String(a.invoice_id));
+					return {
+						invoice_id: Number(a.invoice_id),
+						amount_cents: a.amount_cents,
+						number: i?.number ?? "?",
+						customer: i?.customer ?? "",
+						customer_id: i?.customer_id ?? null,
+						status: i?.status ?? "gone",
+						balance_cents: i?.balance_cents ?? 0,
+					};
+				}),
+			}))
+			.filter((r) => customerId === null || r.allocations.some((a) => String(a.customer_id) === String(customerId)));
+	}
+
+	// Looks for deposits that pay open invoices (rules, then Ledger's AI when an
+	// admin allows it) and saves them as pending suggestions. Nothing is
+	// applied: a person reviews each one.
 	ctx.route("POST", "/payments/match", async (req) => {
 		const o = body(req);
 		const cid = o.customer_id === undefined || o.customer_id === null || o.customer_id === "" ? null : isId(o.customer_id) ? String(o.customer_id) : null;
@@ -272,8 +315,7 @@ export function paymentRoutes(ctx, h, docs) {
 		let aiUsed = false;
 		let aiProblem = ai.problem;
 		let fromAi = [];
-		const useAi = o.use_ai !== false && ai.available;
-		if (useAi) {
+		if (o.use_ai !== false && ai.available) {
 			const taken = new Set(rules.map((r) => `${r.deposit.line_id}`));
 			try {
 				fromAi = await aiMatches(deps.filter((d) => !taken.has(`${d.line_id}`)), invoices);
@@ -282,14 +324,45 @@ export function paymentRoutes(ctx, h, docs) {
 				aiProblem = `The AI couldn't be asked: ${e.message}`;
 			}
 		}
-		const suggestions = [...rules, ...fromAi].map((m) => ({
-			...m.deposit,
-			allocations: m.allocations.map((a) => ({ invoice_id: a.inv.id, number: a.inv.number, customer: a.inv.customer, amount_cents: a.cents, balance_cents: a.inv.balance_cents })),
-			confidence: m.confidence,
-			source: m.source,
-			reason: m.reason,
-		}));
-		return { deposits_checked: deps.length, open_invoices: invoices.length, ai: { available: ai.available, used: aiUsed, problem: aiProblem }, suggestions };
+		// Replace the open suggestions for the deposits looked at with the new ones.
+		const found = [...rules, ...fromAi];
+		const looked = deps.map((d) => String(d.line_id));
+		if (looked.length) await q(`DELETE FROM ${T("payment_suggestions")} WHERE status = 'pending' AND line_id = ANY($1::bigint[])`, [looked]);
+		for (const m of found) {
+			const d = m.deposit;
+			await q(
+				`INSERT INTO ${T("payment_suggestions")} (entry_id, line_id, currency, deposit_date, description, reference, deposit_cents, allocations, confidence, source, reason, created_by)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12)
+				 ON CONFLICT DO NOTHING`,
+				[
+					String(d.entry_id),
+					String(d.line_id),
+					d.currency,
+					d.date,
+					d.description.slice(0, 1000),
+					d.reference.slice(0, 200),
+					d.remaining_cents.toString(),
+					JSON.stringify(m.allocations.map((a) => ({ invoice_id: Number(a.inv.id), amount_cents: Number(a.cents) }))),
+					m.confidence,
+					m.source,
+					m.reason.slice(0, 500),
+					req.user.username,
+				],
+			);
+		}
+		return {
+			deposits_checked: deps.length,
+			open_invoices: invoices.length,
+			found: found.length,
+			ai: { available: ai.available, used: aiUsed, problem: aiProblem },
+			suggestions: await listSuggestions(cid),
+		};
+	});
+
+	ctx.route("GET", "/payments/suggestions", async (req) => {
+		const cid = req.query.get("customer_id") || null;
+		if (cid !== null && !isId(cid)) throw bad("customer_id is not valid");
+		return { data: await listSuggestions(cid) };
 	});
 
 	/**
@@ -310,33 +383,32 @@ export function paymentRoutes(ctx, h, docs) {
 		return { from: accounts[0], receivable };
 	}
 
-	// Applies a deposit that's already in the books to open invoices.
-	ctx.route("POST", "/payments/apply", async (req) => {
-		const o = body(req);
-		if (!isId(o.entry_id) || !isId(o.line_id)) throw bad("entry_id and line_id are required");
+	/** Applies a deposit that's already in the books to open invoices; returns what's left of it. */
+	async function applyDeposit(entryId, lineId, rawAllocations, method, user) {
+		if (!isId(entryId) || !isId(lineId)) throw bad("entry_id and line_id are required");
 		const s = await loadSettings();
 		let entry;
 		try {
-			entry = await ctx.ledger.getJournalEntry(o.entry_id);
+			entry = await ctx.ledger.getJournalEntry(entryId);
 		} catch {
 			throw notFound("journal entry");
 		}
 		if (entry.reverses_id !== null || entry.reversed_by_id !== null) throw conflict("That entry was reversed; it can't pay an invoice.");
-		const line = entry.lines.find((l) => String(l.id) === String(o.line_id));
+		const line = entry.lines.find((l) => String(l.id) === String(lineId));
 		if (!line || BigInt(line.debit_cents ?? 0) <= 0n) throw bad("line_id must be the deposit (a debit) in that entry");
 		const ours = await q(`SELECT 1 FROM ${T("payments")} WHERE journal_entry_id = $1 LIMIT 1`, [String(entry.id)]);
 		if (ours.rowCount) throw conflict("That entry is a payment Sales already posted.");
 		const used = await q(`SELECT coalesce(sum(amount_cents), 0)::bigint AS cents FROM ${T("payments")} WHERE matched_line_id = $1`, [String(line.id)]);
 		const remaining = BigInt(line.debit_cents) - BigInt(used.rows[0].cents);
 
-		const allocs = allocations(o.allocations, await openInvoices(null));
+		const allocs = allocations(rawAllocations, await openInvoices(null));
 		if (allocs[0].invoice.currency !== line.currency) throw bad(`the deposit is in ${line.currency}, the invoices in ${allocs[0].invoice.currency}`);
 		const sum = allocs.reduce((t, a) => t + a.cents, 0n);
 		if (sum > remaining) throw bad(`that's more than the ${formatMoney(remaining, line.currency)} of this deposit not yet applied`);
 
 		const details = {
 			date: entry.entry_date,
-			method: text(o, "method", 50) || "Bank deposit",
+			method: method || "Bank deposit",
 			reference: (entry.reference || `Entry #${entry.id}`).slice(0, 100),
 			matched: { entry_id: entry.id, line_id: line.id },
 		};
@@ -353,12 +425,50 @@ export function paymentRoutes(ctx, h, docs) {
 									{ account_code: p.receivable, credit_cents: a.cents, memo: `Payment on invoice ${a.invoice.number}` },
 								],
 							};
-				done.push({ did: a.invoice.id, pid: await docs.recordPayment(a.invoice.id, { ...details, amount: a.cents, posting }, req.user) });
+				done.push({ did: a.invoice.id, pid: await docs.recordPayment(a.invoice.id, { ...details, amount: a.cents, posting }, user) });
 			}
 		} catch (e) {
-			for (const d of done.reverse()) await docs.deletePayment(d.did, d.pid, req.user).catch((err) => ctx.log.error("could not undo a payment", { err: err.message }));
+			for (const d of done.reverse()) await docs.deletePayment(d.did, d.pid, user).catch((err) => ctx.log.error("could not undo a payment", { err: err.message }));
 			throw e;
 		}
-		return ctx.response(201, { recorded: done.length, remaining_cents: remaining - sum });
+		return { recorded: done.length, remaining_cents: remaining - sum };
+	}
+
+	// Applies a deposit the user picked to open invoices.
+	ctx.route("POST", "/payments/apply", async (req) => {
+		const o = body(req);
+		return ctx.response(201, await applyDeposit(o.entry_id, o.line_id, o.allocations, text(o, "method", 50), req.user));
+	});
+
+	// A person approves a suggestion, as suggested or with changed amounts.
+	ctx.route("POST", "/payments/suggestions/:id/apply", async (req) => {
+		const sid = id(req, "id", "suggestion");
+		const o = body(req);
+		const { rows } = await q(`UPDATE ${T("payment_suggestions")} SET status = 'applying' WHERE id = $1 AND status = 'pending' RETURNING *`, [sid]);
+		const sug = rows[0];
+		if (!sug) {
+			const { rowCount } = await q(`SELECT 1 FROM ${T("payment_suggestions")} WHERE id = $1`, [sid]);
+			throw rowCount ? conflict("this suggestion was already applied or rejected") : notFound("suggestion");
+		}
+		try {
+			const raw = o.allocations === undefined ? sug.allocations.map((a) => ({ invoice_id: a.invoice_id, amount: formatDecimal(a.amount_cents, 2, 2) })) : o.allocations;
+			const r = await applyDeposit(sug.entry_id, sug.line_id, raw, text(o, "method", 50), req.user);
+			await q(`UPDATE ${T("payment_suggestions")} SET status = 'applied', decided_by = $2, decided_at = now() WHERE id = $1`, [sid, req.user.username]);
+			ctx.log.info("payment suggestion applied", { suggestion: sid, source: sug.source, user: req.user.username, edited: o.allocations !== undefined });
+			return ctx.response(201, r);
+		} catch (e) {
+			await q(`UPDATE ${T("payment_suggestions")} SET status = 'pending' WHERE id = $1 AND status = 'applying'`, [sid]);
+			throw e;
+		}
+	});
+
+	// A person says a suggestion is wrong; that deposit isn't suggested again.
+	ctx.route("POST", "/payments/suggestions/:id/reject", async (req) => {
+		const sid = id(req, "id", "suggestion");
+		const { rowCount } = await q(
+			`UPDATE ${T("payment_suggestions")} SET status = 'rejected', decided_by = $2, decided_at = now() WHERE id = $1 AND status = 'pending'`,
+			[sid, req.user.username],
+		);
+		if (!rowCount) throw conflict("this suggestion was already applied or rejected, or doesn't exist");
 	});
 }

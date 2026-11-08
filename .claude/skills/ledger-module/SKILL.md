@@ -98,7 +98,10 @@ payments to the books.
 - Taxes, categories and numbering are admin-only (`requireAdmin`).
 - Payments: `server/payments.mjs` (receive payment over open invoices;
   deposit matching with rules, then `ctx.llm.json` with every answer checked
-  against real balances). Both go through `recordPayment` / `deletePayment`
+  against real balances). Matches are stored in `payment_suggestions`
+  (pending → applied/rejected, with who decided) and act only when a person
+  applies them from the Payments tab, possibly with changed amounts: AI only
+  proposes. A rejected deposit isn't suggested again. Both go through `recordPayment` / `deletePayment`
   in `documents.mjs`. A matched deposit is linked (`matched_entry_id`); Sales
   posts only a move from the deposit's credit account to receivable.
 - Organizations: documents and `ctx.settings` are per organization (Ledger
