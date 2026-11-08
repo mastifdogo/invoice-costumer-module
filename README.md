@@ -83,6 +83,8 @@ businesses, invoice separately. Each organization's admins fill in
 
 ### Changes
 
+- **0.4.1**: in lists and a customer's Transactions, the whole row opens
+  the record (click, or Enter from the keyboard); numbers are plain text.
 - **0.4.0**: journal entries Sales posts, reversals, and matched bank
   deposits carry a link to their invoice (needs Ledger 0.11.2).
 - **0.3.0**: settings per organization; payment suggestions wait on the
