@@ -254,6 +254,14 @@ async function route() {
 	render(h("h1", {}, "Not found"), h("p", {}, h("a", { href: "#/invoices" }, "Back to invoices")));
 }
 const go = (hash) => (location.hash === hash ? route() : (location.hash = hash));
+/** A table row that opens `hash` when clicked, or with Enter from the keyboard (the whole line is the link). */
+const rowLink = (hash) => ({
+	class: "click",
+	tabindex: "0",
+	role: "link",
+	onclick: () => go(hash),
+	onkeydown: (e) => e.key === "Enter" && go(hash),
+});
 // A message shown just before navigating (e.g. "Invoice saved") stays; older ones go.
 window.addEventListener("hashchange", () => {
 	if (Date.now() - flashedAt > 1000) flash(null);
@@ -279,8 +287,8 @@ async function docList(kind, qs = new URLSearchParams()) {
 				? data.map((d) =>
 						h(
 							"tr",
-							{ class: "click", onclick: () => go(docHref(d)) },
-							h("td", {}, h("a", { href: docHref(d) }, d.number)),
+							rowLink(docHref(d)),
+							h("td", {}, d.number),
 							h("td", {}, d.customer_name, d.customer_company ? h("div", { class: "muted" }, d.customer_company) : null),
 							h("td", {}, d.issue_date),
 							h("td", {}, d.due_date),
@@ -759,8 +767,8 @@ async function customerList() {
 				? data.map((c) =>
 						h(
 							"tr",
-							{ class: "click", onclick: () => go(`#/customers/${c.id}`) },
-							h("td", {}, h("a", { href: `#/customers/${c.id}` }, c.name), c.archived ? h("span", { class: "muted" }, " (archived)") : null),
+							rowLink(`#/customers/${c.id}`),
+							h("td", {}, c.name, c.archived ? h("span", { class: "muted" }, " (archived)") : null),
 							h("td", {}, c.company),
 							h("td", {}, c.email),
 							h("td", {}, c.phone),
@@ -901,20 +909,20 @@ async function customerView(id) {
 						d
 							? h(
 									"tr",
-									{ class: "click", onclick: () => go(docHref(d)) },
+									rowLink(docHref(d)),
 									h("td", {}, d.issue_date),
 									h("td", {}, KINDS[d.kind].label),
-									h("td", {}, h("a", { href: docHref(d) }, d.number)),
+									h("td", {}, d.number),
 									h("td", {}, d.due_date),
 									h("td", {}, badge(d)),
 									h("td", { class: "num" }, money(d.total_cents, d.currency)),
 								)
 							: h(
 									"tr",
-									{ class: "click", onclick: () => go(payHref(p)) },
+									rowLink(payHref(p)),
 									h("td", {}, p.payment_date),
 									h("td", {}, "Payment"),
-									h("td", {}, "on ", h("a", { href: payHref(p) }, p.invoice_number), p.method ? h("div", { class: "muted" }, [p.method, p.reference].filter(Boolean).join(" · ")) : null),
+									h("td", {}, "on ", p.invoice_number, p.method ? h("div", { class: "muted" }, [p.method, p.reference].filter(Boolean).join(" · ")) : null),
 									h("td", {}, ""),
 									h("td", {}, h("span", { class: "badge paid" }, how(p))),
 									h("td", { class: "num", style: "color:var(--ok)" }, "−" + money(p.amount_cents, p.currency)),
@@ -942,7 +950,7 @@ function receivePaymentDialog(c, invoices, done) {
 					const inp = input(`apply_${i.id}`, "", { inputmode: "decimal", placeholder: "0.00", style: "max-width:8rem" });
 					inp.oninput = showSum;
 					applyInputs.set(i, inp);
-					return h("tr", {}, h("td", {}, h("a", { href: `#/invoices/${i.id}`, target: "_blank" }, i.number), h("div", { class: "muted" }, `due ${i.due_date}`)), h("td", { class: "num" }, money(i.balance_cents)), h("td", { class: "right" }, inp));
+					return h("tr", {}, h("td", {}, i.number, h("div", { class: "muted" }, `due ${i.due_date}`)), h("td", { class: "num" }, money(i.balance_cents)), h("td", { class: "right" }, inp));
 				}),
 		);
 		spread();
@@ -1062,7 +1070,7 @@ function suggestionCard(sug, { showCustomer = true, onDecided = () => {} } = {})
 					h(
 						"tr",
 						{},
-						h("td", {}, h("a", { href: `#/invoices/${a.invoice_id}`, target: "_blank" }, a.number), showCustomer && a.customer ? h("div", { class: "muted" }, a.customer) : null),
+						h("td", {}, a.number, showCustomer && a.customer ? h("div", { class: "muted" }, a.customer) : null),
 						h("td", { class: "num muted" }, `due ${money(a.balance_cents)}`),
 						h("td", { class: "right" }, inp),
 					),

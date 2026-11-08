@@ -61,7 +61,8 @@ table { width: 100%; border-collapse: collapse; }
 th, td { padding: 0.45rem 0.5rem; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
 th { font-size: 0.8rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.02em; }
 tr.click { cursor: pointer; }
-tr.click:hover td { background: var(--surface); }
+tr.click:hover td, tr.click:focus-visible td { background: var(--surface); }
+tr.click:focus-visible { outline: 2px solid var(--accent, currentColor); outline-offset: -2px; }
 tfoot td { border-bottom: 0; }
 
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 180px), 1fr)); gap: 0.75rem; margin-bottom: 1rem; }
