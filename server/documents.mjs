@@ -12,6 +12,7 @@
 import { addDays, computeTotals, formatDecimal, formatMoney, MAX_CENTS, today } from "../lib/money.mjs";
 import { renderDocumentPdf } from "../lib/pdf.mjs";
 import { KINDS } from "./common.mjs";
+import { openLink } from "./search.mjs";
 
 const MAX_LINES = 200;
 // Column types for parameters in INSERT ... SELECT, where Postgres can't infer them.
@@ -241,6 +242,22 @@ export function documentRoutes(ctx, h, mail) {
 		return lines;
 	}
 
+	/** The link Ledger shows on a journal entry that came from this invoice (Ledger ≥ 0.11.2). */
+	const invoiceLink = (doc, what = "Invoice") => ({
+		ref: `invoice:${doc.id}`,
+		label: `${what} ${doc.number} · ${doc.customer?.name ?? ""}`.slice(0, 200),
+		href: openLink(`invoices/${doc.id}`),
+	});
+
+	/** Links an entry that already exists (a reversal, a matched deposit); a failure here never undoes the work. */
+	async function linkEntry(entryId, link, user) {
+		try {
+			await ctx.ledger.linkJournalEntry(entryId, link, user);
+		} catch (e) {
+			ctx.log.warn("could not link journal entry", { entry: String(entryId), ref: link.ref, error: e.message });
+		}
+	}
+
 	/** Issues a draft invoice: locks it, posts it to the books when enabled, and marks it open. */
 	async function issueInvoice(did, user) {
 		const s = await loadSettings();
@@ -261,6 +278,7 @@ export function documentRoutes(ctx, h, mail) {
 						description: `Invoice ${doc.number} – ${doc.customer.name}`.slice(0, 500),
 						reference: doc.number.slice(0, 100),
 						lines: await postingLines(doc, totals, s),
+						links: [invoiceLink(doc)],
 					},
 					user,
 				);
@@ -342,7 +360,7 @@ export function documentRoutes(ctx, h, mail) {
 		if (lines) {
 			try {
 				const entry = await ctx.ledger.createJournalEntry(
-					{ entry_date: date, description: `${memo} – ${before.customer.name}`.slice(0, 500), reference: (reference || before.number).slice(0, 100), lines },
+					{ entry_date: date, description: `${memo} – ${before.customer.name}`.slice(0, 500), reference: (reference || before.number).slice(0, 100), lines, links: [invoiceLink(before, "Payment on invoice")] },
 					user,
 				);
 				await q(`UPDATE ${T("payments")} SET journal_entry_id = $2 WHERE id = $1`, [pid, String(entry.id)]);
@@ -351,6 +369,8 @@ export function documentRoutes(ctx, h, mail) {
 				throw e;
 			}
 		}
+		// A deposit already in the books that this payment uses: link it to the invoice too.
+		if (!lines && matched) await linkEntry(matched.entry_id, invoiceLink(before, "Payment on invoice"), user);
 		return pid;
 	}
 
@@ -365,9 +385,14 @@ export function documentRoutes(ctx, h, mail) {
 		// Reverse first: if that fails, nothing has changed. A second concurrent
 		// attempt fails here too, since Ledger reverses an entry only once.
 		if (p.journal_entry_id !== null) {
-			await ctx.ledger.reverseJournalEntry(p.journal_entry_id, { entry_date: today(), description: `Removed payment on invoice ${doc.number}` }, user);
+			const rev = await ctx.ledger.reverseJournalEntry(p.journal_entry_id, { entry_date: today(), description: `Removed payment on invoice ${doc.number}` }, user);
+			await linkEntry(rev.id, invoiceLink(doc, "Removed payment on invoice"), user);
 		}
 		await removePayment(did, String(pid));
+		// A matched deposit that no longer pays this invoice loses its link to it.
+		if (p.journal_entry_id === null && p.matched_entry_id != null && !doc.payments.some((x) => x.id !== p.id && String(x.matched_entry_id) === String(p.matched_entry_id))) {
+			await ctx.ledger.unlinkJournalEntry(p.matched_entry_id, `invoice:${doc.id}`).catch((e) => ctx.log.warn("could not unlink journal entry", { error: e.message }));
+		}
 	}
 
 	// ---- PDF and email ----------------------------------------------------------------------
@@ -600,16 +625,20 @@ ${paras}
 				throw conflict("remove this invoice's payments before voiding it");
 			}
 			const { number, journal_entry_id } = rows[0];
+			let voidEntry = null;
 			if (journal_entry_id !== null) {
 				try {
 					const rev = await ctx.ledger.reverseJournalEntry(journal_entry_id, { entry_date: date, description: `Void invoice ${number}` }, req.user);
 					await q(`UPDATE ${T("documents")} SET void_entry_id = $2 WHERE id = $1`, [did, String(rev.id)]);
+					voidEntry = rev.id;
 				} catch (e) {
 					await q(`UPDATE ${T("documents")} SET status = 'open' WHERE id = $1 AND status = 'void'`, [did]);
 					throw e;
 				}
 			}
-			return getDocument(did);
+			const doc = await getDocument(did);
+			if (voidEntry !== null) await linkEntry(voidEntry, invoiceLink(doc, "Void invoice"), req.user);
+			return doc;
 		});
 
 		ctx.route("POST", `${base}/:id/payments`, async (req) => {

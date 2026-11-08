@@ -28,7 +28,7 @@ in Ledger's sidebar as **Sales**, with a hammer icon, and lets you:
   and posted to the books. Partial payments are fine.
 - **match bank deposits** that are already in the books (e.g. imported from
   a statement) to the invoices they pay: exact matches by amount or invoice
-  number, and, when an admin allows Sales under **Settings → AI**, Ledger's
+  number, and, when an admin allows Sales under **Settings → LLM API**, Ledger's
   AI for the rest (one deposit paying several invoices, vague descriptions).
   Matches are saved as suggestions on the **Payments** tab (and the
   dashboard shows how many wait): change the amounts if needed, then
@@ -47,6 +47,9 @@ in Ledger's sidebar as **Sales**, with a hammer icon, and lets you:
   Cr each line's category revenue account and Cr each tax's payable account.
   A payment posts Dr bank / Cr receivable. Voiding an invoice or removing a
   payment reverses its entry. Quotes and estimates are never posted.
+  Every entry Sales posts (and every bank deposit it applies) is linked to
+  its invoice: Ledger shows "Invoice INV-0031 · Acme" on the entry and in
+  the journal, and the link opens the invoice in Sales.
 
 It has no dependencies (the PDF writer and the email client are built in),
 so Ledger installs it as-is. The page works at full width and in a narrow
@@ -54,8 +57,9 @@ side pane.
 
 ## Install
 
-Needs **Ledger 0.11.1 or newer** (settings per organization, plus the
-settings form, Gmail, search and user roles from earlier versions). In
+Needs **Ledger 0.11.2 or newer** (journal entry links, settings per
+organization, plus the settings form, Gmail, search and user roles from
+earlier versions). In
 Ledger, open **Settings → Modules**, enter `mastifdogo/sales_module` and add it.
 Ledger installs the latest GitHub Release, creates the module's database
 schema (`mod_sales`) and adds **Sales** to the sidebar. You can hide or move
@@ -76,6 +80,13 @@ taxes, numbering and settings (business name, GST number, prefixes, account
 codes, email), so a business and someone's personal books, or two
 businesses, invoice separately. Each organization's admins fill in
 **Settings → Sales** for it; a new organization starts from the defaults.
+
+### Changes
+
+- **0.4.0**: journal entries Sales posts, reversals, and matched bank
+  deposits carry a link to their invoice (needs Ledger 0.11.2).
+- **0.3.0**: settings per organization; payment suggestions wait on the
+  Payments tab for a person to apply or reject them.
 
 ### Accounts it uses
 
