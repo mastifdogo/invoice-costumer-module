@@ -80,7 +80,14 @@ export function customerRoutes(ctx, h) {
 		);
 		const t = today();
 		const docs = rows.map((d) => ({ ...d, overdue: d.kind === "invoice" && d.status === "open" && d.due_date < t, expired: d.kind !== "invoice" && ["draft", "sent"].includes(d.status) && d.due_date < t }));
-		return { ...c, documents: docs };
+		const payments = await q(
+			`SELECT p.id, p.document_id, d.number AS invoice_number, d.currency, p.payment_date::text, p.amount_cents, p.method, p.reference,
+			        p.journal_entry_id, p.matched_entry_id
+			   FROM ${T("payments")} p JOIN ${T("documents")} d ON d.id = p.document_id
+			  WHERE d.customer_id = $1 ORDER BY p.payment_date DESC, p.id DESC`,
+			[c.id],
+		);
+		return { ...c, documents: docs, payments: payments.rows };
 	});
 
 	ctx.route("PUT", "/customers/:id", async (req) => {

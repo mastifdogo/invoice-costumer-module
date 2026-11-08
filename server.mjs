@@ -10,6 +10,7 @@ import { dashboardSync } from "./server/dashboard.mjs";
 import { documentRoutes } from "./server/documents.mjs";
 import { mailHelpers } from "./server/email.mjs";
 import { moveSettings } from "./server/move-settings.mjs";
+import { paymentRoutes } from "./server/payments.mjs";
 import { searchProvider } from "./server/search.mjs";
 import { settingsRoutes } from "./server/settings.mjs";
 
@@ -21,7 +22,7 @@ export default async function register(ctx) {
 	routes.route = (method, path, handler) =>
 		ctx.route(method, path, async (req) => {
 			const result = await handler(req);
-			if (method !== "GET") dashboard.schedule();
+			if (method !== "GET") dashboard.schedule(req.user?.organization?.id);
 			return result;
 		});
 
@@ -30,9 +31,14 @@ export default async function register(ctx) {
 	catalogRoutes(routes, h);
 	customerRoutes(routes, h);
 	const docs = documentRoutes(routes, h, mail);
+	paymentRoutes(routes, h, docs);
 	searchProvider(ctx, h);
-	await moveSettings(ctx, h);
-	await docs.recover();
+	// Startup runs in the main books; each organization has its own documents
+	// and (Ledger ≥ 0.11.1) its own settings, so visit each one.
+	await ctx.orgs.forEach(async (org) => {
+		await moveSettings(ctx, h, org);
+		await docs.recover(org);
+	});
 	dashboard.start();
 	ctx.log.info("sales module ready", { dashboard: Boolean(ctx.dashboard) });
 }

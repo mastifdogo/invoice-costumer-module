@@ -232,6 +232,7 @@ const routes = [
 	[/^\/customers\/(\d+)$/, (m) => customerView(m[1])],
 	[/^\/customers\/(\d+)\/edit$/, (m) => customerForm(m[1])],
 	[/^\/categories$/, () => categoryList()],
+	[/^\/payments$/, () => paymentsView()],
 ];
 
 async function route() {
@@ -325,7 +326,14 @@ async function docList(kind, qs = new URLSearchParams()) {
 	}
 
 	render(
-		h("h1", {}, K.title, h("span", { class: "spacer" }), h("a", { class: "button primary", href: `#/${K.plural}/new` }, `+ New ${K.label.toLowerCase()}`)),
+		h(
+			"h1",
+			{},
+			K.title,
+			h("span", { class: "spacer" }),
+			isInvoice ? h("button", { onclick: () => matchDepositsDialog({}, () => docList(kind).catch(fail)) }, "Find matching deposits") : null,
+			h("a", { class: "button primary", href: `#/${K.plural}/new` }, `+ New ${K.label.toLowerCase()}`),
+		),
 		hints.length ? h("ul", { class: "muted" }, hints) : null,
 		cards.length ? h("div", { class: "cards" }, cards) : null,
 		h("div", { class: "filters" }, seg, search),
@@ -840,6 +848,7 @@ async function customerForm(idOrNull) {
 
 async function customerView(id) {
 	const [c, taxes] = await Promise.all([api(`/customers/${id}`), api("/taxes")]);
+	const reload = () => customerView(id).catch(fail);
 	const taxNames = c.tax_ids === null ? "default" : c.tax_ids.map((t) => taxes.data.find((x) => String(x.id) === String(t))?.name ?? "?").join(" + ") || "none (exempt)";
 	const info = [
 		["Company", c.company],
@@ -852,6 +861,19 @@ async function customerView(id) {
 		["Taxes", taxNames],
 		["Outstanding", outstandingText(c.outstanding)],
 	].filter(([, v]) => v);
+	const openInvoices = c.documents
+		.filter((d) => d.kind === "invoice" && d.status === "open")
+		.map((d) => ({ ...d, balance_cents: BigInt(d.total_cents) - BigInt(d.paid_cents) }))
+		.sort((a, b) => (a.due_date < b.due_date ? -1 : a.due_date > b.due_date ? 1 : 0));
+
+	// Documents and payments together, newest first.
+	const rows = [
+		...c.documents.map((d) => ({ date: d.issue_date, sort: `${d.issue_date} 1 ${String(d.id).padStart(12, "0")}`, doc: d })),
+		...c.payments.map((p) => ({ date: p.payment_date, sort: `${p.payment_date} 0 ${String(p.id).padStart(12, "0")}`, pay: p })),
+	].sort((a, b) => (a.sort < b.sort ? 1 : -1));
+	const payHref = (p) => `#/invoices/${p.document_id}`;
+	const how = (p) => (p.matched_entry_id ? "matched deposit" : p.journal_entry_id ? "posted" : "recorded");
+
 	render(
 		h("p", {}, h("a", { href: "#/customers" }, "← Customers")),
 		h("h1", {}, c.name, c.archived ? h("span", { class: "badge void" }, "archived") : null),
@@ -861,6 +883,8 @@ async function customerView(id) {
 			h("a", { class: "button primary", href: `#/invoices/new?customer=${c.id}` }, "+ Invoice"),
 			h("a", { class: "button", href: `#/quotes/new?customer=${c.id}` }, "+ Quote"),
 			h("a", { class: "button", href: `#/estimates/new?customer=${c.id}` }, "+ Estimate"),
+			openInvoices.length ? h("button", { onclick: () => receivePaymentDialog(c, openInvoices, reload) }, "Receive payment") : null,
+			openInvoices.length ? h("button", { onclick: () => matchDepositsDialog({ customer: c }, reload) }, "Find matching deposits") : null,
 			h("a", { class: "button", href: `#/customers/${c.id}/edit` }, "Edit"),
 		),
 		h(
@@ -869,25 +893,249 @@ async function customerView(id) {
 			h("table", {}, h("tbody", {}, info.map(([k, v]) => h("tr", {}, h("td", { class: "muted" }, k), h("td", {}, v))))),
 			h("div", {}, c.address ? [h("div", { class: "muted" }, "Billing address"), h("div", { class: "box" }, c.address)] : null, c.notes ? [h("div", { class: "muted", style: "margin-top:0.75rem" }, "Notes"), h("div", { class: "box" }, c.notes)] : null),
 		),
-		h("h2", {}, "Invoices, quotes and estimates"),
-		c.documents.length
+		h("h2", {}, "Transactions"),
+		rows.length
 			? table(
-					["Type", "Number", "Date", "Due / valid until", "Status", ["Total", "right"]],
-					c.documents.map((d) =>
-						h(
-							"tr",
-							{ class: "click", onclick: () => go(docHref(d)) },
-							h("td", {}, KINDS[d.kind].label),
-							h("td", {}, h("a", { href: docHref(d) }, d.number)),
-							h("td", {}, d.issue_date),
-							h("td", {}, d.due_date),
-							h("td", {}, badge(d)),
-							h("td", { class: "num" }, money(d.total_cents, d.currency)),
-						),
+					["Date", "Type", "Number", "Due / valid until", "Status", ["Amount", "right"]],
+					rows.map(({ doc: d, pay: p }) =>
+						d
+							? h(
+									"tr",
+									{ class: "click", onclick: () => go(docHref(d)) },
+									h("td", {}, d.issue_date),
+									h("td", {}, KINDS[d.kind].label),
+									h("td", {}, h("a", { href: docHref(d) }, d.number)),
+									h("td", {}, d.due_date),
+									h("td", {}, badge(d)),
+									h("td", { class: "num" }, money(d.total_cents, d.currency)),
+								)
+							: h(
+									"tr",
+									{ class: "click", onclick: () => go(payHref(p)) },
+									h("td", {}, p.payment_date),
+									h("td", {}, "Payment"),
+									h("td", {}, "on ", h("a", { href: payHref(p) }, p.invoice_number), p.method ? h("div", { class: "muted" }, [p.method, p.reference].filter(Boolean).join(" · ")) : null),
+									h("td", {}, ""),
+									h("td", {}, h("span", { class: "badge paid" }, how(p))),
+									h("td", { class: "num", style: "color:var(--ok)" }, "−" + money(p.amount_cents, p.currency)),
+								),
 					),
 				)
 			: h("p", { class: "muted" }, "Nothing yet."),
 	);
+}
+
+/** Receive one payment from a customer and spread it over their open invoices (oldest first; editable). */
+function receivePaymentDialog(c, invoices, done) {
+	const currencies = [...new Set(invoices.map((i) => i.currency))];
+	const cur = select("currency", currencies.includes(c.currency) ? c.currency : currencies[0], currencies.map((x) => [x, x]));
+	const amount = input("amount", "", { inputmode: "decimal", required: true, placeholder: "0.00" });
+	const rowsBody = h("tbody");
+	const summary = h("p", { class: "hint" });
+	const applyInputs = new Map();
+	function drawRows() {
+		applyInputs.clear();
+		rowsBody.replaceChildren(
+			...invoices
+				.filter((i) => i.currency === cur.value)
+				.map((i) => {
+					const inp = input(`apply_${i.id}`, "", { inputmode: "decimal", placeholder: "0.00", style: "max-width:8rem" });
+					inp.oninput = showSum;
+					applyInputs.set(i, inp);
+					return h("tr", {}, h("td", {}, h("a", { href: `#/invoices/${i.id}`, target: "_blank" }, i.number), h("div", { class: "muted" }, `due ${i.due_date}`)), h("td", { class: "num" }, money(i.balance_cents)), h("td", { class: "right" }, inp));
+				}),
+		);
+		spread();
+	}
+	/** Fills the amounts in oldest first. */
+	function spread() {
+		let left = parseDec(amount.value, 2) ?? 0n;
+		for (const [i, inp] of applyInputs) {
+			const take = left > 0n ? (left < i.balance_cents ? left : i.balance_cents) : 0n;
+			inp.value = take > 0n ? fmtDec(take, 2) : "";
+			left -= take;
+		}
+		showSum();
+	}
+	function showSum() {
+		let sum = 0n;
+		for (const inp of applyInputs.values()) sum += parseDec(inp.value || "0", 2) ?? 0n;
+		const total = parseDec(amount.value, 2) ?? 0n;
+		const owed = [...applyInputs.keys()].reduce((s, i) => s + i.balance_cents, 0n);
+		summary.textContent = `Applied ${money(sum, cur.value)} of ${money(total, cur.value)}. ${c.name} owes ${money(owed, cur.value)}.` + (sum !== total ? " The amounts applied must add up to the payment." : "");
+		summary.style.color = sum !== total ? "var(--warn)" : "";
+	}
+	amount.oninput = spread;
+	cur.onchange = drawRows;
+	const form = h(
+		"form",
+		{ method: "dialog" },
+		h("h2", {}, `Receive a payment from ${c.name}`),
+		h(
+			"div",
+			{ class: "grid" },
+			field("Amount received", amount),
+			currencies.length > 1 ? field("Currency", cur) : null,
+			field("Date", input("payment_date", todayStr(), { type: "date", required: true })),
+			field("Method", input("method", "", { list: "methods-rp", placeholder: "e.g. e-Transfer", maxlength: 50 })),
+			field("Reference", input("reference", "", { maxlength: 100, placeholder: "cheque or transfer number" })),
+		),
+		h("datalist", { id: "methods-rp" }, ["e-Transfer", "Cheque", "Cash", "Credit card", "Wire", "ACH", "PayPal"].map((m) => h("option", { value: m }))),
+		h("h2", {}, "Apply to invoices"),
+		scroll(h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Invoice"), h("th", { class: "right" }, "Balance"), h("th", { class: "right" }, "Apply"))), rowsBody)),
+		summary,
+		h("p", { class: "hint" }, "With ledger posting on, each part posts Dr bank / Cr receivable. If the money is already in the bank account from an imported statement, use Find matching deposits instead, so it isn't counted twice."),
+		h("div", { class: "actions" }, h("button", { class: "primary", type: "submit" }, "Record payment"), h("button", { type: "button", onclick: closeDialog }, "Cancel")),
+	);
+	form.onsubmit = (e) => {
+		e.preventDefault();
+		busy(e.submitter, async () => {
+			const o = formData(form);
+			const allocations = [...applyInputs].filter(([, inp]) => inp.value.trim()).map(([i, inp]) => ({ invoice_id: i.id, amount: inp.value.trim() }));
+			const r = await api(`/customers/${c.id}/payments`, { method: "POST", body: { amount: o.amount, payment_date: o.payment_date, method: o.method, reference: o.reference, allocations } });
+			closeDialog();
+			flash(`Payment recorded on ${r.invoices.map((i) => i.number).join(", ")}.`);
+			done();
+		});
+	};
+	drawRows();
+	openDialog(form);
+}
+
+/**
+ * One suggested match, for a person to review: the amounts can be changed
+ * (0 leaves an invoice out), then Apply or Reject. Nothing happens otherwise.
+ */
+function suggestionCard(sug, { showCustomer = true, onDecided = () => {} } = {}) {
+	const status = h("div", { class: "actions" });
+	const inputs = sug.allocations.map((a) => {
+		const inp = input(`amt_${a.invoice_id}`, fmtDec(a.amount_cents, 2), { inputmode: "decimal", style: "max-width:7rem", "aria-label": `Amount for ${a.number}` });
+		return { a, inp };
+	});
+	// Paid some other way since it was suggested: say so instead of letting Apply fail.
+	const stale = sug.allocations.filter((a) => a.status !== "open" || BigInt(a.balance_cents) < BigInt(a.amount_cents));
+	const decide = (what, fn) =>
+		h("button", {
+			class: what === "Apply" && sug.confidence === "high" && !stale.length ? "primary" : what === "Reject" ? "danger" : "",
+			disabled: what === "Apply" && stale.length > 0,
+			onclick: (e) => busy(e.currentTarget, fn),
+		}, what);
+	status.append(
+		decide("Apply", async () => {
+			const allocations = inputs.map(({ a, inp }) => ({ invoice_id: a.invoice_id, amount: inp.value.trim() || "0" })).filter((x) => parseDec(x.amount, 2) !== 0n);
+			await api(`/payments/suggestions/${sug.id}/apply`, { method: "POST", body: { allocations } });
+			status.replaceChildren(h("span", { style: "color:var(--ok)" }, "Applied."));
+			onDecided();
+		}),
+		decide("Reject", async () => {
+			await api(`/payments/suggestions/${sug.id}/reject`, { method: "POST", body: {} });
+			status.replaceChildren(h("span", { class: "muted" }, "Rejected. This deposit won't be suggested again."));
+			onDecided();
+		}),
+	);
+	return h(
+		"div",
+		{ class: "card", style: "margin-bottom:0.6rem" },
+		h(
+			"div",
+			{},
+			h("strong", {}, money(sug.remaining_cents, sug.currency)),
+			" deposited ",
+			sug.date,
+			" ",
+			h("span", { class: `badge ${sug.confidence === "high" ? "paid" : sug.confidence === "medium" ? "open" : "draft"}` }, `${sug.confidence}${sug.source === "ai" ? " · AI" : ""}`),
+		),
+		h("div", { class: "muted" }, sug.description || "(no description)", sug.reference ? ` · ref ${sug.reference}` : ""),
+		sug.reason ? h("div", { class: "hint" }, sug.source === "ai" ? "AI: " : "", sug.reason) : null,
+		stale.length
+			? h(
+					"p",
+					{ style: "color:var(--warn);margin:0.4rem 0 0" },
+					`${stale.map((a) => `${a.number} is ${a.status === "open" ? "partly paid" : a.status}`).join(", ")} since this was suggested. Reject it, or look for new matches.`,
+				)
+			: null,
+		scroll(
+			h(
+				"table",
+				{ style: "margin-top:0.4rem" },
+				h("tbody", {}, inputs.map(({ a, inp }) =>
+					h(
+						"tr",
+						{},
+						h("td", {}, h("a", { href: `#/invoices/${a.invoice_id}`, target: "_blank" }, a.number), showCustomer && a.customer ? h("div", { class: "muted" }, a.customer) : null),
+						h("td", { class: "num muted" }, `due ${money(a.balance_cents)}`),
+						h("td", { class: "right" }, inp),
+					),
+				)),
+			),
+		),
+		status,
+	);
+}
+
+function aiNote(ai) {
+	if (!ai) return "";
+	if (ai.used) return "Matches marked AI were suggested by Ledger's AI. Check each one; nothing is applied until you approve it.";
+	return ai.problem ? `Only exact matches were looked for. ${ai.problem}` : "";
+}
+
+/** Looks for matches (saved as suggestions to review) and shows them in a dialog. */
+async function matchDepositsDialog({ customer = null } = {}, done) {
+	const list = h("div", {}, h("p", { class: "muted" }, "Looking through recent bank deposits…"));
+	const note = h("p", { class: "hint" });
+	let changed = false;
+	const d = openDialog(
+		h("h2", {}, customer ? `Deposits that may be from ${customer.name}` : "Deposits that may pay open invoices"),
+		note,
+		list,
+		h("div", { class: "actions" }, h("a", { class: "button", href: "#/payments", onclick: closeDialog }, "All suggestions"), h("button", { type: "button", onclick: closeDialog }, "Close")),
+	);
+	d.addEventListener("close", () => changed && done(), { once: true });
+	let r;
+	try {
+		r = await api("/payments/match", { method: "POST", body: customer ? { customer_id: customer.id } : {} });
+	} catch (e) {
+		list.replaceChildren(h("p", { style: "color:var(--danger)" }, e.message));
+		return;
+	}
+	note.textContent = `Checked ${r.deposits_checked} deposit${r.deposits_checked === 1 ? "" : "s"} from the last 90 days against ${r.open_invoices} open invoice${r.open_invoices === 1 ? "" : "s"}. ${aiNote(r.ai)}`;
+	list.replaceChildren(
+		...(r.suggestions.length
+			? r.suggestions.map((sug) => suggestionCard(sug, { showCustomer: !customer, onDecided: () => (changed = true) }))
+			: [h("p", { class: "muted" }, "No likely matches. Record payments on the invoice, or use Receive payment.")]),
+	);
+}
+
+/** Payments tab: suggested deposit matches waiting for a person to approve or reject them. */
+async function paymentsView() {
+	const [{ data }, settings] = await Promise.all([api("/payments/suggestions"), api("/settings")]);
+	const note = h("p", { class: "hint" });
+	const list = h("div");
+	const draw = (items) =>
+		list.replaceChildren(
+			...(items.length
+				? items.map((sug) => suggestionCard(sug, { onDecided: () => {} }))
+				: [h("p", { class: "muted" }, "No suggestions waiting. Look for new matches to check recent bank deposits against open invoices.")]),
+		);
+	const look = h("button", {
+		class: "primary",
+		onclick: (e) =>
+			busy(e.currentTarget, async () => {
+				const r = await api("/payments/match", { method: "POST", body: {} });
+				note.textContent = `Checked ${r.deposits_checked} deposit${r.deposits_checked === 1 ? "" : "s"} against ${r.open_invoices} open invoice${r.open_invoices === 1 ? "" : "s"}; ${r.found} match${r.found === 1 ? "" : "es"} found. ${aiNote(r.ai)}`;
+				draw(r.suggestions);
+			}),
+	}, "Look for new matches");
+	note.textContent = settings.ai?.available
+		? "Matches come from exact rules and from Ledger's AI. Nothing is applied until you approve it."
+		: `Matches come from exact rules (amount, invoice number). ${settings.ai?.problem ?? ""}`;
+	render(
+		h("h1", {}, "Payments to review", h("span", { class: "spacer" }), look),
+		h("p", { class: "muted" }, "Bank deposits already in the books that may pay open invoices. Change an amount if it's not right, then Apply, or Reject it if the deposit isn't a payment for these invoices."),
+		note,
+		list,
+	);
+	draw(data);
 }
 
 // ---- categories ----------------------------------------------------------------------------------

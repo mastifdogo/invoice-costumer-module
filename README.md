@@ -23,7 +23,19 @@ in Ledger's sidebar as **Sales**, with a hammer icon, and lets you:
 - **email PDFs** through Ledger's shared Gmail account, or your own mail
   server (SMTP: Microsoft 365, Fastmail, iCloud, Zoho, a local relay…), with
   editable messages and a log of every send
-- **record payments**, including partial payments, and see what's overdue
+- **receive payments**: from a customer's page, enter what came in and it's
+  spread over their open invoices, oldest first (you can change the split),
+  and posted to the books. Partial payments are fine.
+- **match bank deposits** that are already in the books (e.g. imported from
+  a statement) to the invoices they pay: exact matches by amount or invoice
+  number, and, when an admin allows Sales under **Settings → AI**, Ledger's
+  AI for the rest (one deposit paying several invoices, vague descriptions).
+  Matches are saved as suggestions on the **Payments** tab (and the
+  dashboard shows how many wait): change the amounts if needed, then
+  **Apply** or **Reject**. Nothing is applied until a person approves it; a
+  rejected deposit isn't suggested again. Applying never counts the money twice:
+  a deposit credited to receivable is just linked; one sitting in another
+  account (e.g. suspense) is moved to receivable with one entry.
 - **put reminders on Ledger's dashboard**: a notification when invoices are
   overdue, a to-do for each issued invoice that hasn't been emailed, and a
   to-do to follow up on each sent quote or estimate. They clear themselves
@@ -42,10 +54,9 @@ side pane.
 
 ## Install
 
-Needs **Ledger 0.10.0 or newer** (settings form, Gmail, search, user
-roles). Links from search and the dashboard open the exact document with
-Ledger 0.10.1 or newer; on 0.10.0 they open the Sales page. In Ledger, open
-**Settings → Modules**, enter `mastifdogo/invoice-costumer-module` and add it.
+Needs **Ledger 0.11.1 or newer** (settings per organization, plus the
+settings form, Gmail, search and user roles from earlier versions). In
+Ledger, open **Settings → Modules**, enter `mastifdogo/sales_module` and add it.
 Ledger installs the latest GitHub Release, creates the module's database
 schema (`mod_sales`) and adds **Sales** to the sidebar. You can hide or move
 it under **Settings → Sidebar**.
@@ -57,8 +68,14 @@ up SMTP, Sales keeps using it.
 **Upgrading from v0.0.0** (then called "Invoices & customers", id
 `invoices`): Ledger won't update a module whose id changed, so the old one
 keeps running with the generic icon. Remove it under Settings → Modules,
-then add `mastifdogo/invoice-costumer-module` again. The old module's data
+then add `mastifdogo/sales_module` again. The old module's data
 stays in the `mod_invoices` schema.
+
+**Organizations**: each organization has its own customers, documents,
+taxes, numbering and settings (business name, GST number, prefixes, account
+codes, email), so a business and someone's personal books, or two
+businesses, invoice separately. Each organization's admins fill in
+**Settings → Sales** for it; a new organization starts from the defaults.
 
 ### Accounts it uses
 
@@ -141,6 +158,10 @@ login:
 - invoices also have `/:id/issue`, `/:id/void` and `/:id/payments`
 - quotes and estimates also have `/:id/mark-sent`, `/:id/accept`,
   `/:id/decline`, `/:id/reopen` and `/:id/convert`
+- `customers/:id/payments` (receive a payment), `payments/match` (look for
+  deposit matches and save them as suggestions), `payments/suggestions`
+  (list; `/:id/apply` with optional changed amounts, `/:id/reject`),
+  `payments/apply` (apply a deposit the user picked)
 - `customers`, `categories`, `taxes`, `settings` (read-only), `numbering`,
   `settings/test-email`, `summary`
 - Changing taxes, categories or numbering needs the admin role.
@@ -157,6 +178,7 @@ server/customers.mjs    customers
 server/settings.mjs     settings for the page, numbering, test email, summary
 server/email.mjs        sending through ctx.gmail or SMTP
 server/search.mjs       results for Ledger's search bar
+server/payments.mjs     receive payment, deposit matching (rules + ctx.llm)
 server/dashboard.mjs    notifications and to-dos on Ledger's dashboard
 server/move-settings.mjs  one-time copy of pre-0.2.0 settings into Ledger's form
 lib/money.mjs           exact money and tax arithmetic
@@ -180,7 +202,8 @@ Add `--serve 8098` to keep it running and try it in a browser.
 
 ## Releasing
 
-Bump `version` in `ledger-module.json`, tag it (`git tag v0.2.0 && git push
-origin v0.2.0`) and create a GitHub Release from the tag (not a draft or
-pre-release). Ledger installs it on its update schedule, or straight away
+Bump `version` in `ledger-module.json`: new features raise the middle
+number (`0.3.0` → `0.4.0`), fixes only the last (`0.3.0` → `0.3.1`). Tag it
+(`git tag v0.4.0 && git push origin v0.4.0`) and create a GitHub Release
+from the tag (not a draft or pre-release). Ledger installs it on its update schedule, or straight away
 with **Update modules now** under Settings → Modules.

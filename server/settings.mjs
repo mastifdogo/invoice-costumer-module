@@ -10,8 +10,20 @@ export function settingsRoutes(ctx, h, mail) {
 	/** Settings for the page: never the SMTP password. */
 	async function publicSettings(req) {
 		const { smtp_password, ...s } = await loadSettings();
-		const email = await mail.status(s);
-		return { ...s, smtp_password_set: smtp_password !== "", email, email_ready: email.ready, is_admin: req.user.role === "admin" };
+		const [email, ai] = await Promise.all([mail.status(s), aiStatus()]);
+		return { ...s, smtp_password_set: smtp_password !== "", email, email_ready: email.ready, ai, is_admin: req.user.role === "admin" };
+	}
+
+	/** Whether deposit matching can ask Ledger's AI, and if not, what to do about it. */
+	async function aiStatus() {
+		try {
+			const st = await ctx.llm.status();
+			if (!st.configured) return { available: false, problem: "No AI provider is set up. An admin can set one under Settings → AI." };
+			if (!st.allowed) return { available: false, problem: "Sales isn't allowed to use AI yet. An admin can allow it under Settings → AI." };
+			return { available: true, problem: "" };
+		} catch {
+			return { available: false, problem: "This Ledger has no AI support." };
+		}
 	}
 
 	ctx.route("GET", "/settings", (req) => publicSettings(req));

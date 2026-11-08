@@ -168,7 +168,7 @@ export function documentRoutes(ctx, h, mail) {
 				  WHERE l.document_id = $1 ORDER BY l.position, l.id`,
 				[did],
 			),
-			q(`SELECT id, payment_date::text, amount_cents, method, reference, journal_entry_id, created_by, created_at FROM ${T("payments")} WHERE document_id = $1 ORDER BY payment_date, id`, [did]),
+			q(`SELECT id, payment_date::text, amount_cents, method, reference, journal_entry_id, matched_entry_id, created_by, created_at FROM ${T("payments")} WHERE document_id = $1 ORDER BY payment_date, id`, [did]),
 			q(`SELECT id, recipients, subject, ok, error, sent_by, sent_at FROM ${T("email_log")} WHERE document_id = $1 ORDER BY id DESC LIMIT 50`, [did]),
 		]);
 		doc.lines = lines.rows.map((l) => ({ ...l, quantity_text: formatDecimal(l.quantity, 3), tax_ids: l.taxes.map((t) => t.id) }));
@@ -292,6 +292,82 @@ export function documentRoutes(ctx, h, mail) {
 			[did, pid],
 		);
 		return rows[0] ?? null;
+	}
+
+	/**
+	 * Records a payment on an open invoice and raises what's paid on it.
+	 * `posting` says what goes into the books:
+	 *   "bank" (default): Dr bank / Cr receivable, when ledger posting is on and
+	 *     the invoice was posted;
+	 *   { lines }: these journal lines instead (e.g. moving a matched bank
+	 *     deposit out of a clearing account into receivable);
+	 *   "none": nothing (the money is already in the books).
+	 * `matched` links the payment to a bank deposit already in the books.
+	 * Returns the payment id; on failure nothing is left behind.
+	 */
+	async function recordPayment(did, { date, amount, method = "", reference = "", posting = "bank", matched = null }, user) {
+		if (amount <= 0n) throw bad("amount must be more than zero");
+		const s = await loadSettings();
+		const before = await getDocument(did, "invoice");
+		if (before.status !== "open") throw conflict(`payments can only be recorded on issued, unpaid invoices (${before.number} is ${before.status})`);
+		if (amount > before.balance_cents) throw bad(`amount is more than the balance due on ${before.number} (${formatMoney(before.balance_cents, before.currency)})`);
+		let lines = null;
+		const memo = `Payment on invoice ${before.number}`;
+		if (posting === "bank" && s.post_to_ledger && before.journal_entry_id !== null) {
+			const accounts = s.accounts?.[before.currency] ?? {};
+			if (!accounts.receivable || !accounts.bank) throw bad(`Ledger posting is on, but the ${before.currency} receivable and bank accounts aren't both set (Settings → Sales)`);
+			lines = [
+				{ account_code: accounts.bank, debit_cents: amount, memo },
+				{ account_code: accounts.receivable, credit_cents: amount, memo },
+			];
+		} else if (posting && typeof posting === "object") {
+			lines = posting.lines.map((l) => ({ ...l, memo: l.memo ?? memo }));
+		}
+
+		// Record the payment and raise paid_cents in one statement, only if it still fits the balance.
+		const { rows } = await q(
+			`WITH doc AS (
+				UPDATE ${T("documents")}
+				   SET paid_cents = paid_cents + $2::bigint, updated_at = now(),
+				       status = CASE WHEN paid_cents + $2::bigint >= total_cents THEN 'paid' ELSE status END
+				 WHERE id = $1 AND kind = 'invoice' AND status = 'open' AND paid_cents + $2::bigint <= total_cents
+				RETURNING id
+			)
+			INSERT INTO ${T("payments")} (document_id, payment_date, amount_cents, method, reference, created_by, matched_entry_id, matched_line_id)
+			SELECT id, $3::date, $2::bigint, $4::text, $5::text, $6::text, $7::bigint, $8::bigint FROM doc RETURNING id`,
+			[did, amount.toString(), date, method, reference, user.username, matched ? String(matched.entry_id) : null, matched ? String(matched.line_id) : null],
+		);
+		if (!rows[0]) throw conflict(`${before.number} changed meanwhile; reload and try again`);
+		const pid = rows[0].id;
+		if (lines) {
+			try {
+				const entry = await ctx.ledger.createJournalEntry(
+					{ entry_date: date, description: `${memo} – ${before.customer.name}`.slice(0, 500), reference: (reference || before.number).slice(0, 100), lines },
+					user,
+				);
+				await q(`UPDATE ${T("payments")} SET journal_entry_id = $2 WHERE id = $1`, [pid, String(entry.id)]);
+			} catch (e) {
+				await removePayment(did, pid);
+				throw e;
+			}
+		}
+		return pid;
+	}
+
+	/**
+	 * Removes a payment: reverses the entry this module posted for it, if any,
+	 * and takes it off the invoice. A matched bank deposit stays in the books.
+	 */
+	async function deletePayment(did, pid, user) {
+		const doc = await getDocument(did, "invoice");
+		const p = doc.payments.find((x) => String(x.id) === String(pid));
+		if (!p) throw notFound("payment");
+		// Reverse first: if that fails, nothing has changed. A second concurrent
+		// attempt fails here too, since Ledger reverses an entry only once.
+		if (p.journal_entry_id !== null) {
+			await ctx.ledger.reverseJournalEntry(p.journal_entry_id, { entry_date: today(), description: `Removed payment on invoice ${doc.number}` }, user);
+		}
+		await removePayment(did, String(pid));
 	}
 
 	// ---- PDF and email ----------------------------------------------------------------------
@@ -537,73 +613,17 @@ ${paras}
 		});
 
 		ctx.route("POST", `${base}/:id/payments`, async (req) => {
-			const did = docId(req);
 			const o = body(req);
-			const s = await loadSettings();
 			const date = o.payment_date === undefined || o.payment_date === "" ? today() : dateField(o.payment_date, "payment_date");
 			const amount = decimal(o.amount, 2, "amount");
-			if (amount <= 0n) throw bad("amount must be more than zero");
-			const method = text(o, "method", 50);
-			const reference = text(o, "reference", 100);
-
-			const before = await getDocument(did, "invoice");
-			if (before.status !== "open") throw conflict(`payments can only be recorded on issued, unpaid invoices (this one is ${before.status})`);
-			if (amount > before.balance_cents) throw bad(`amount is more than the balance due (${formatMoney(before.balance_cents, before.currency)})`);
-			const post = s.post_to_ledger && before.journal_entry_id !== null;
-			const accounts = s.accounts?.[before.currency] ?? {};
-			if (post && (!accounts.receivable || !accounts.bank)) throw bad(`Ledger posting is on, but the ${before.currency} receivable and bank accounts aren't both set (Settings → Ledger posting)`);
-
-			// Record the payment and raise paid_cents in one statement, only if it still fits the balance.
-			const { rows } = await q(
-				`WITH doc AS (
-					UPDATE ${T("documents")}
-					   SET paid_cents = paid_cents + $2::bigint, updated_at = now(),
-					       status = CASE WHEN paid_cents + $2::bigint >= total_cents THEN 'paid' ELSE status END
-					 WHERE id = $1 AND kind = 'invoice' AND status = 'open' AND paid_cents + $2::bigint <= total_cents
-					RETURNING id
-				)
-				INSERT INTO ${T("payments")} (document_id, payment_date, amount_cents, method, reference, created_by)
-				SELECT id, $3::date, $2::bigint, $4::text, $5::text, $6::text FROM doc RETURNING id`,
-				[did, amount.toString(), date, method, reference, req.user.username],
-			);
-			if (!rows[0]) throw conflict("the invoice changed meanwhile; reload and try again");
-			const pid = rows[0].id;
-			if (post) {
-				try {
-					const memo = `Payment on invoice ${before.number}`;
-					const entry = await ctx.ledger.createJournalEntry(
-						{
-							entry_date: date,
-							description: `${memo} – ${before.customer.name}`.slice(0, 500),
-							reference: (reference || before.number).slice(0, 100),
-							lines: [
-								{ account_code: accounts.bank, debit_cents: amount, memo },
-								{ account_code: accounts.receivable, credit_cents: amount, memo },
-							],
-						},
-						req.user,
-					);
-					await q(`UPDATE ${T("payments")} SET journal_entry_id = $2 WHERE id = $1`, [pid, String(entry.id)]);
-				} catch (e) {
-					await removePayment(did, pid);
-					throw e;
-				}
-			}
+			const did = docId(req);
+			await recordPayment(did, { date, amount, method: text(o, "method", 50), reference: text(o, "reference", 100) }, req.user);
 			return ctx.response(201, await getDocument(did));
 		});
 
 		ctx.route("DELETE", `${base}/:id/payments/:pid`, async (req) => {
 			const did = docId(req);
-			const pid = id(req, "pid", "payment");
-			const doc = await getDocument(did, "invoice");
-			const p = doc.payments.find((x) => String(x.id) === pid);
-			if (!p) throw notFound("payment");
-			// Reverse first: if that fails, nothing has changed. A second concurrent
-			// attempt fails here too, since Ledger reverses an entry only once.
-			if (p.journal_entry_id !== null) {
-				await ctx.ledger.reverseJournalEntry(p.journal_entry_id, { entry_date: today(), description: `Removed payment on invoice ${doc.number}` }, req.user);
-			}
-			await removePayment(did, pid);
+			await deletePayment(did, id(req, "pid", "payment"), req.user);
 			return getDocument(did);
 		});
 	}
@@ -681,11 +701,17 @@ ${paras}
 	}
 
 	return {
+		recordPayment,
+		deletePayment,
+		getDocument,
 		/** An invoice left in "posting" means Ledger stopped mid-issue; put it back to draft. */
-		async recover() {
+		async recover(org = null) {
 			const stuck = await q(`UPDATE ${T("documents")} SET status = 'draft' WHERE kind = 'invoice' AND status = 'posting' RETURNING number`);
 			for (const r of stuck.rows) {
-				ctx.log.warn("invoice was being issued when Ledger stopped; it is a draft again. Check the books for a duplicate entry before issuing it.", { number: r.number });
+				ctx.log.warn("invoice was being issued when Ledger stopped; it is a draft again. Check the books for a duplicate entry before issuing it.", {
+					number: r.number,
+					...(org ? { organization: org.name } : {}),
+				});
 			}
 		},
 	};
