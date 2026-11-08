@@ -1,6 +1,7 @@
 // Up to 0.1.0 the module kept its configuration in its own settings table.
 // From 0.2.0 it lives in Ledger's settings form (ctx.settings). On the first
-// start after upgrading, copy the old values across once.
+// start after upgrading, copy the old values across once. Both are per
+// organization (Ledger ≥ 0.11.1): call this inside ctx.orgs.forEach.
 
 const TEXT = [
 	"business_name", "business_address", "business_email", "business_phone", "tax_id_label", "tax_id", "footer",
@@ -11,7 +12,7 @@ const TEXT = [
 const NUMBERS = ["default_terms_days", "quote_valid_days", "estimate_valid_days", "smtp_port"];
 const BOOLEANS = ["post_to_ledger", "bcc_self"];
 
-export async function moveSettings(ctx, h) {
+export async function moveSettings(ctx, h, org = null) {
 	const { rows } = await h.q(`SELECT * FROM ${h.T("settings")} WHERE id = 1 AND NOT moved_to_ledger_settings`);
 	const old = rows[0];
 	if (!old) return;
@@ -33,9 +34,9 @@ export async function moveSettings(ctx, h) {
 			await ctx.settings.set({ [k]: v });
 		} catch (e) {
 			failed.push(k);
-			ctx.log.warn("could not move a setting to Ledger's settings form", { key: k, err: e.message });
+			ctx.log.warn("could not move a setting to Ledger's settings form", { key: k, err: e.message, ...(org ? { organization: org.name } : {}) });
 		}
 	}
 	await h.q(`UPDATE ${h.T("settings")} SET moved_to_ledger_settings = true WHERE id = 1`);
-	ctx.log.info("moved settings to Ledger's settings form", { moved: Object.keys(values).length - failed.length, failed: failed.length });
+	ctx.log.info("moved settings to Ledger's settings form", { moved: Object.keys(values).length - failed.length, failed: failed.length, ...(org ? { organization: org.name } : {}) });
 }

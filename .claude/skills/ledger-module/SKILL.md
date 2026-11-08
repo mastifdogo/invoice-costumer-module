@@ -87,7 +87,7 @@ payments to the books.
   `move-settings`, `common`); `lib/` has `money.mjs`, `pdf.mjs` (PDF
   generation, no dependencies) and `mail.mjs` (its own SMTP client). Tests:
   `test/*.test.mjs` (`npm test`).
-- Needs Ledger ≥ 0.10.0. Settings are the manifest's `settings.fields`
+- Needs Ledger ≥ 0.11.1. Settings are the manifest's `settings.fields`
   (Ledger's form under Settings → Sales), read through `loadSettings()` in
   `server/common.mjs`. What a form can't hold (taxes, next document numbers,
   the email check) is `ui/setup.html`, shown under the form. The module's
@@ -101,12 +101,12 @@ payments to the books.
   against real balances). Both go through `recordPayment` / `deletePayment`
   in `documents.mjs`. A matched deposit is linked (`matched_entry_id`); Sales
   posts only a move from the deposit's credit account to receivable.
-- Organizations (Ledger ≥ 0.11.0, feature-detected): background work
-  (dashboard sync, startup recovery) runs through `ctx.orgs.forEach`; the
-  one-time settings copy stays in the main books (settings are server-wide).
+- Organizations: documents and `ctx.settings` are per organization (Ledger
+  ≥ 0.11.1). Background work (dashboard sync, startup recovery, the one-time
+  settings copy) runs through `ctx.orgs.forEach`; a change syncs only its
+  own organization.
 - Search (`ctx.search.provide`) and dashboard items link to
   `/apps/sales?open=<route>`; the page turns `?open=` into its hash route.
-  Ledger forwards the query string to the page from 0.10.1; on 0.10.0 the
-  links open the Sales start page.
+  Ledger forwards the query string to the page (0.10.1 and later).
 - Known follow-ups:
   - `nav.icon` is `hammer` because the user asked for it; keep it.

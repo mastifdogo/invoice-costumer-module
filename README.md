@@ -51,10 +51,9 @@ side pane.
 
 ## Install
 
-Needs **Ledger 0.10.0 or newer** (settings form, Gmail, search, user
-roles). Links from search and the dashboard open the exact document with
-Ledger 0.10.1 or newer; on 0.10.0 they open the Sales page. In Ledger, open
-**Settings → Modules**, enter `mastifdogo/invoice-costumer-module` and add it.
+Needs **Ledger 0.11.1 or newer** (settings per organization, plus the
+settings form, Gmail, search and user roles from earlier versions). In
+Ledger, open **Settings → Modules**, enter `mastifdogo/sales_module` and add it.
 Ledger installs the latest GitHub Release, creates the module's database
 schema (`mod_sales`) and adds **Sales** to the sidebar. You can hide or move
 it under **Settings → Sidebar**.
@@ -66,12 +65,14 @@ up SMTP, Sales keeps using it.
 **Upgrading from v0.0.0** (then called "Invoices & customers", id
 `invoices`): Ledger won't update a module whose id changed, so the old one
 keeps running with the generic icon. Remove it under Settings → Modules,
-then add `mastifdogo/invoice-costumer-module` again. The old module's data
+then add `mastifdogo/sales_module` again. The old module's data
 stays in the `mod_invoices` schema.
 
-**Organizations** (Ledger 0.11.0): each organization has its own customers,
-documents, taxes and numbering. Settings in Ledger's form (business details,
-prefixes, account codes, email) are shared by all organizations.
+**Organizations**: each organization has its own customers, documents,
+taxes, numbering and settings (business name, GST number, prefixes, account
+codes, email), so a business and someone's personal books, or two
+businesses, invoice separately. Each organization's admins fill in
+**Settings → Sales** for it; a new organization starts from the defaults.
 
 ### Accounts it uses
 
@@ -196,7 +197,8 @@ Add `--serve 8098` to keep it running and try it in a browser.
 
 ## Releasing
 
-Bump `version` in `ledger-module.json`, tag it (`git tag v0.2.0 && git push
-origin v0.2.0`) and create a GitHub Release from the tag (not a draft or
-pre-release). Ledger installs it on its update schedule, or straight away
+Bump `version` in `ledger-module.json`: new features raise the middle
+number (`0.3.0` → `0.4.0`), fixes only the last (`0.3.0` → `0.3.1`). Tag it
+(`git tag v0.4.0 && git push origin v0.4.0`) and create a GitHub Release
+from the tag (not a draft or pre-release). Ledger installs it on its update schedule, or straight away
 with **Update modules now** under Settings → Modules.

@@ -22,6 +22,7 @@ function fakeCtx(extra = {}) {
 		log: { info: (m, a) => logs.push(["info", m, a]), warn: (m, a) => logs.push(["warn", m, a]), error: (m, a) => logs.push(["error", m, a]) },
 		ledger: {},
 		settings: { get: async () => ({}), set: async () => {}, onChange() {} },
+		orgs: { forEach: async (fn) => fn({ id: 1, name: "Main books", kind: "business" }) },
 		...extra,
 	};
 	return { ctx, routes, logs };
@@ -97,11 +98,14 @@ test("organizations: startup and dashboard syncs run in each organization's book
 	});
 	ctx.db.query = async (sql) => {
 		if (sql.includes("status = 'posting'")) seen.push(["recover", current]);
+		if (sql.includes("NOT moved_to_ledger_settings")) seen.push(["move", current]);
 		return { rows: [], rowCount: 0 };
 	};
 	await register(ctx);
 	await new Promise((r) => setTimeout(r, 50));
 	assert.deepEqual(seen.filter(([w]) => w === "recover").map(([, o]) => o), [1, 2]);
+	// Old settings are copied in each organization (settings are per organization from Ledger 0.11.1).
+	assert.deepEqual(seen.filter(([w]) => w === "move").map(([, o]) => o), [1, 2]);
 	assert.deepEqual([...new Set(seen.filter(([w]) => w === "dashboard.list").map(([, o]) => o))], [1, 2]);
 
 	// A change in organization 2 syncs organization 2 only.

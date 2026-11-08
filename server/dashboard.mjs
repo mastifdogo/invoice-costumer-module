@@ -4,7 +4,7 @@
 // each sent quote or estimate. Needs a Ledger with ctx.dashboard; on older
 // versions it does nothing.
 //
-// With organizations (Ledger ≥ 0.11.0) each one has its own documents and
+// Each organization (Ledger ≥ 0.11.0) has its own documents and
 // dashboard. Syncs run outside requests, where Ledger is in the main books,
 // so they go through ctx.orgs.forEach: after a change, for the organization
 // that changed; hourly and at startup, for all of them.
@@ -104,7 +104,6 @@ export function dashboardSync(ctx, h) {
 	async function syncPending() {
 		const targets = pending;
 		pending = new Set();
-		if (!ctx.orgs) return sync(null);
 		await ctx.orgs.forEach((org) => (targets.has("all") || targets.has(org.id) ? sync(org) : undefined));
 	}
 

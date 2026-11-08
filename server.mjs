@@ -33,12 +33,12 @@ export default async function register(ctx) {
 	const docs = documentRoutes(routes, h, mail);
 	paymentRoutes(routes, h, docs);
 	searchProvider(ctx, h);
-	// Settings are server-wide, and before organizations there was one set of
-	// books: copy the old values from the main books only.
-	await moveSettings(ctx, h);
-	// Startup runs in the main books; each organization has its own documents.
-	if (ctx.orgs) await ctx.orgs.forEach((org) => docs.recover(org));
-	else await docs.recover();
+	// Startup runs in the main books; each organization has its own documents
+	// and (Ledger ≥ 0.11.1) its own settings, so visit each one.
+	await ctx.orgs.forEach(async (org) => {
+		await moveSettings(ctx, h, org);
+		await docs.recover(org);
+	});
 	dashboard.start();
 	ctx.log.info("sales module ready", { dashboard: Boolean(ctx.dashboard) });
 }
