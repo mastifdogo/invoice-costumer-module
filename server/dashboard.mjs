@@ -3,6 +3,11 @@
 // each issued invoice that hasn't been emailed, and a to-do to follow up on
 // each sent quote or estimate. Needs a Ledger with ctx.dashboard; on older
 // versions it does nothing.
+//
+// With organizations (Ledger ≥ 0.11.0) each one has its own documents and
+// dashboard. Syncs run outside requests, where Ledger is in the main books,
+// so they go through ctx.orgs.forEach: after a change, for the organization
+// that changed; hourly and at startup, for all of them.
 
 import { formatMoney, today } from "../lib/money.mjs";
 import { KINDS } from "./common.mjs";
@@ -17,6 +22,8 @@ export function dashboardSync(ctx, h) {
 	const { T, q } = h;
 	let timer = null;
 	let running = null;
+	// Organizations waiting for a sync; "all" means every one.
+	let pending = new Set();
 
 	/** The to-dos that should be open now, by key. */
 	async function wantedTodos() {
@@ -84,40 +91,50 @@ export function dashboardSync(ctx, h) {
 		}
 	}
 
-	async function sync() {
+	/** One organization's items (or the only books, before organizations). */
+	async function sync(org) {
 		try {
 			await syncOverdue();
 			await syncTodos();
 		} catch (e) {
-			ctx.log.warn("dashboard sync failed", { err: e.message });
+			ctx.log.warn("dashboard sync failed", { err: e.message, ...(org ? { organization: org.id } : {}) });
 		}
 	}
 
-	/** Runs one sync at a time; a request made during a sync runs once more after it. */
+	async function syncPending() {
+		const targets = pending;
+		pending = new Set();
+		if (!ctx.orgs) return sync(null);
+		await ctx.orgs.forEach((org) => (targets.has("all") || targets.has(org.id) ? sync(org) : undefined));
+	}
+
+	/** Runs one sync at a time; changes made during a sync are picked up by another run right after. */
 	function run() {
-		if (running) {
-			running.again = true;
-			return;
-		}
-		running = { again: false };
-		sync().finally(() => {
-			const again = running.again;
-			running = null;
-			if (again) run();
-		});
+		if (running) return;
+		running = syncPending()
+			.catch((e) => ctx.log.warn("dashboard sync failed", { err: e.message }))
+			.finally(() => {
+				running = null;
+				if (pending.size) run();
+			});
 	}
 
 	return {
-		/** Syncs shortly after a change (several changes in a row sync once). */
-		schedule() {
+		/**
+		 * Syncs shortly after a change in `orgId`'s books (several changes in a
+		 * row sync once). Without an organization id, syncs all of them.
+		 */
+		schedule(orgId) {
+			pending.add(typeof orgId === "number" ? orgId : "all");
 			clearTimeout(timer);
 			timer = setTimeout(run, 500);
 			timer.unref?.();
 		},
 		/** First sync now, then hourly, so invoices become overdue without anyone opening the page. */
 		start() {
+			pending.add("all");
 			run();
-			setInterval(run, HOURLY).unref();
+			setInterval(() => (pending.add("all"), run()), HOURLY).unref();
 		},
 	};
 }

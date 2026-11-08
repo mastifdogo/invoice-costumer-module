@@ -96,6 +96,14 @@ payments to the books.
 - Email: `ctx.gmail.send()` by default (an admin allows Sales under
   Settings → Gmail), the module's own SMTP client when the user chooses it.
 - Taxes, categories and numbering are admin-only (`requireAdmin`).
+- Payments: `server/payments.mjs` (receive payment over open invoices;
+  deposit matching with rules, then `ctx.llm.json` with every answer checked
+  against real balances). Both go through `recordPayment` / `deletePayment`
+  in `documents.mjs`. A matched deposit is linked (`matched_entry_id`); Sales
+  posts only a move from the deposit's credit account to receivable.
+- Organizations (Ledger ≥ 0.11.0, feature-detected): background work
+  (dashboard sync, startup recovery) runs through `ctx.orgs.forEach`; the
+  one-time settings copy stays in the main books (settings are server-wide).
 - Search (`ctx.search.provide`) and dashboard items link to
   `/apps/sales?open=<route>`; the page turns `?open=` into its hash route.
   Ledger forwards the query string to the page from 0.10.1; on 0.10.0 the

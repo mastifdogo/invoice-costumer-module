@@ -23,7 +23,16 @@ in Ledger's sidebar as **Sales**, with a hammer icon, and lets you:
 - **email PDFs** through Ledger's shared Gmail account, or your own mail
   server (SMTP: Microsoft 365, Fastmail, iCloud, Zoho, a local relay…), with
   editable messages and a log of every send
-- **record payments**, including partial payments, and see what's overdue
+- **receive payments**: from a customer's page, enter what came in and it's
+  spread over their open invoices, oldest first (you can change the split),
+  and posted to the books. Partial payments are fine.
+- **match bank deposits** that are already in the books (e.g. imported from
+  a statement) to the invoices they pay: exact matches by amount or invoice
+  number, and, when an admin allows Sales under **Settings → AI**, Ledger's
+  AI for the rest (one deposit paying several invoices, vague descriptions).
+  You apply each suggestion yourself. Applying never counts the money twice:
+  a deposit credited to receivable is just linked; one sitting in another
+  account (e.g. suspense) is moved to receivable with one entry.
 - **put reminders on Ledger's dashboard**: a notification when invoices are
   overdue, a to-do for each issued invoice that hasn't been emailed, and a
   to-do to follow up on each sent quote or estimate. They clear themselves
@@ -59,6 +68,10 @@ up SMTP, Sales keeps using it.
 keeps running with the generic icon. Remove it under Settings → Modules,
 then add `mastifdogo/invoice-costumer-module` again. The old module's data
 stays in the `mod_invoices` schema.
+
+**Organizations** (Ledger 0.11.0): each organization has its own customers,
+documents, taxes and numbering. Settings in Ledger's form (business details,
+prefixes, account codes, email) are shared by all organizations.
 
 ### Accounts it uses
 
@@ -141,6 +154,8 @@ login:
 - invoices also have `/:id/issue`, `/:id/void` and `/:id/payments`
 - quotes and estimates also have `/:id/mark-sent`, `/:id/accept`,
   `/:id/decline`, `/:id/reopen` and `/:id/convert`
+- `customers/:id/payments` (receive a payment), `payments/match` (suggest
+  deposit matches; records nothing), `payments/apply` (apply a deposit)
 - `customers`, `categories`, `taxes`, `settings` (read-only), `numbering`,
   `settings/test-email`, `summary`
 - Changing taxes, categories or numbering needs the admin role.
@@ -157,6 +172,7 @@ server/customers.mjs    customers
 server/settings.mjs     settings for the page, numbering, test email, summary
 server/email.mjs        sending through ctx.gmail or SMTP
 server/search.mjs       results for Ledger's search bar
+server/payments.mjs     receive payment, deposit matching (rules + ctx.llm)
 server/dashboard.mjs    notifications and to-dos on Ledger's dashboard
 server/move-settings.mjs  one-time copy of pre-0.2.0 settings into Ledger's form
 lib/money.mjs           exact money and tax arithmetic

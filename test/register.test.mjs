@@ -77,3 +77,37 @@ test("search results link into the module page", async () => {
 	assert.deepEqual(r.map((x) => x.href), ["/apps/sales?open=customers%2F7", "/apps/sales?open=invoices%2F31"]);
 	assert.equal(r[1].subtitle, "Acme · $4,200.00 CAD · open · 2026-11-01");
 });
+
+test("organizations: startup and dashboard syncs run in each organization's books", async () => {
+	let current = 1; // the organization Ledger is "in", as ctx.orgs.forEach would set it
+	const seen = []; // [what, organization]
+	const orgs = [{ id: 1, name: "Main books", kind: "business" }, { id: 2, name: "Side", kind: "business" }];
+	const dashboard = new Proxy({}, { get: (_, name) => async () => (seen.push([`dashboard.${String(name)}`, current]), name === "list" ? [] : true) });
+	const { ctx, routes } = fakeCtx({
+		dashboard,
+		orgs: {
+			forEach: async (fn) => {
+				for (const o of orgs) {
+					current = o.id;
+					await fn(o);
+				}
+				current = 1;
+			},
+		},
+	});
+	ctx.db.query = async (sql) => {
+		if (sql.includes("status = 'posting'")) seen.push(["recover", current]);
+		return { rows: [], rowCount: 0 };
+	};
+	await register(ctx);
+	await new Promise((r) => setTimeout(r, 50));
+	assert.deepEqual(seen.filter(([w]) => w === "recover").map(([, o]) => o), [1, 2]);
+	assert.deepEqual([...new Set(seen.filter(([w]) => w === "dashboard.list").map(([, o]) => o))], [1, 2]);
+
+	// A change in organization 2 syncs organization 2 only.
+	seen.length = 0;
+	const route = routes.find((r) => r.method === "PUT" && r.path === "/numbering");
+	await route.handler({ params: {}, body: {}, query: new URLSearchParams(), user: { username: "a", role: "admin", organization: { id: 2, name: "Side", kind: "business" } } });
+	await new Promise((r) => setTimeout(r, 700));
+	assert.deepEqual([...new Set(seen.filter(([w]) => w.startsWith("dashboard.")).map(([, o]) => o))], [2]);
+});

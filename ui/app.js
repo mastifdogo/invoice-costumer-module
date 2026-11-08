@@ -325,7 +325,14 @@ async function docList(kind, qs = new URLSearchParams()) {
 	}
 
 	render(
-		h("h1", {}, K.title, h("span", { class: "spacer" }), h("a", { class: "button primary", href: `#/${K.plural}/new` }, `+ New ${K.label.toLowerCase()}`)),
+		h(
+			"h1",
+			{},
+			K.title,
+			h("span", { class: "spacer" }),
+			isInvoice ? h("button", { onclick: () => matchDepositsDialog({}, () => docList(kind).catch(fail)) }, "Find matching deposits") : null,
+			h("a", { class: "button primary", href: `#/${K.plural}/new` }, `+ New ${K.label.toLowerCase()}`),
+		),
 		hints.length ? h("ul", { class: "muted" }, hints) : null,
 		cards.length ? h("div", { class: "cards" }, cards) : null,
 		h("div", { class: "filters" }, seg, search),
@@ -840,6 +847,7 @@ async function customerForm(idOrNull) {
 
 async function customerView(id) {
 	const [c, taxes] = await Promise.all([api(`/customers/${id}`), api("/taxes")]);
+	const reload = () => customerView(id).catch(fail);
 	const taxNames = c.tax_ids === null ? "default" : c.tax_ids.map((t) => taxes.data.find((x) => String(x.id) === String(t))?.name ?? "?").join(" + ") || "none (exempt)";
 	const info = [
 		["Company", c.company],
@@ -852,6 +860,19 @@ async function customerView(id) {
 		["Taxes", taxNames],
 		["Outstanding", outstandingText(c.outstanding)],
 	].filter(([, v]) => v);
+	const openInvoices = c.documents
+		.filter((d) => d.kind === "invoice" && d.status === "open")
+		.map((d) => ({ ...d, balance_cents: BigInt(d.total_cents) - BigInt(d.paid_cents) }))
+		.sort((a, b) => (a.due_date < b.due_date ? -1 : a.due_date > b.due_date ? 1 : 0));
+
+	// Documents and payments together, newest first.
+	const rows = [
+		...c.documents.map((d) => ({ date: d.issue_date, sort: `${d.issue_date} 1 ${String(d.id).padStart(12, "0")}`, doc: d })),
+		...c.payments.map((p) => ({ date: p.payment_date, sort: `${p.payment_date} 0 ${String(p.id).padStart(12, "0")}`, pay: p })),
+	].sort((a, b) => (a.sort < b.sort ? 1 : -1));
+	const payHref = (p) => `#/invoices/${p.document_id}`;
+	const how = (p) => (p.matched_entry_id ? "matched deposit" : p.journal_entry_id ? "posted" : "recorded");
+
 	render(
 		h("p", {}, h("a", { href: "#/customers" }, "← Customers")),
 		h("h1", {}, c.name, c.archived ? h("span", { class: "badge void" }, "archived") : null),
@@ -861,6 +882,8 @@ async function customerView(id) {
 			h("a", { class: "button primary", href: `#/invoices/new?customer=${c.id}` }, "+ Invoice"),
 			h("a", { class: "button", href: `#/quotes/new?customer=${c.id}` }, "+ Quote"),
 			h("a", { class: "button", href: `#/estimates/new?customer=${c.id}` }, "+ Estimate"),
+			openInvoices.length ? h("button", { onclick: () => receivePaymentDialog(c, openInvoices, reload) }, "Receive payment") : null,
+			openInvoices.length ? h("button", { onclick: () => matchDepositsDialog({ customer: c }, reload) }, "Find matching deposits") : null,
 			h("a", { class: "button", href: `#/customers/${c.id}/edit` }, "Edit"),
 		),
 		h(
@@ -869,24 +892,170 @@ async function customerView(id) {
 			h("table", {}, h("tbody", {}, info.map(([k, v]) => h("tr", {}, h("td", { class: "muted" }, k), h("td", {}, v))))),
 			h("div", {}, c.address ? [h("div", { class: "muted" }, "Billing address"), h("div", { class: "box" }, c.address)] : null, c.notes ? [h("div", { class: "muted", style: "margin-top:0.75rem" }, "Notes"), h("div", { class: "box" }, c.notes)] : null),
 		),
-		h("h2", {}, "Invoices, quotes and estimates"),
-		c.documents.length
+		h("h2", {}, "Transactions"),
+		rows.length
 			? table(
-					["Type", "Number", "Date", "Due / valid until", "Status", ["Total", "right"]],
-					c.documents.map((d) =>
-						h(
-							"tr",
-							{ class: "click", onclick: () => go(docHref(d)) },
-							h("td", {}, KINDS[d.kind].label),
-							h("td", {}, h("a", { href: docHref(d) }, d.number)),
-							h("td", {}, d.issue_date),
-							h("td", {}, d.due_date),
-							h("td", {}, badge(d)),
-							h("td", { class: "num" }, money(d.total_cents, d.currency)),
-						),
+					["Date", "Type", "Number", "Due / valid until", "Status", ["Amount", "right"]],
+					rows.map(({ doc: d, pay: p }) =>
+						d
+							? h(
+									"tr",
+									{ class: "click", onclick: () => go(docHref(d)) },
+									h("td", {}, d.issue_date),
+									h("td", {}, KINDS[d.kind].label),
+									h("td", {}, h("a", { href: docHref(d) }, d.number)),
+									h("td", {}, d.due_date),
+									h("td", {}, badge(d)),
+									h("td", { class: "num" }, money(d.total_cents, d.currency)),
+								)
+							: h(
+									"tr",
+									{ class: "click", onclick: () => go(payHref(p)) },
+									h("td", {}, p.payment_date),
+									h("td", {}, "Payment"),
+									h("td", {}, "on ", h("a", { href: payHref(p) }, p.invoice_number), p.method ? h("div", { class: "muted" }, [p.method, p.reference].filter(Boolean).join(" · ")) : null),
+									h("td", {}, ""),
+									h("td", {}, h("span", { class: "badge paid" }, how(p))),
+									h("td", { class: "num", style: "color:var(--ok)" }, "−" + money(p.amount_cents, p.currency)),
+								),
 					),
 				)
 			: h("p", { class: "muted" }, "Nothing yet."),
+	);
+}
+
+/** Receive one payment from a customer and spread it over their open invoices (oldest first; editable). */
+function receivePaymentDialog(c, invoices, done) {
+	const currencies = [...new Set(invoices.map((i) => i.currency))];
+	const cur = select("currency", currencies.includes(c.currency) ? c.currency : currencies[0], currencies.map((x) => [x, x]));
+	const amount = input("amount", "", { inputmode: "decimal", required: true, placeholder: "0.00" });
+	const rowsBody = h("tbody");
+	const summary = h("p", { class: "hint" });
+	const applyInputs = new Map();
+	function drawRows() {
+		applyInputs.clear();
+		rowsBody.replaceChildren(
+			...invoices
+				.filter((i) => i.currency === cur.value)
+				.map((i) => {
+					const inp = input(`apply_${i.id}`, "", { inputmode: "decimal", placeholder: "0.00", style: "max-width:8rem" });
+					inp.oninput = showSum;
+					applyInputs.set(i, inp);
+					return h("tr", {}, h("td", {}, h("a", { href: `#/invoices/${i.id}`, target: "_blank" }, i.number), h("div", { class: "muted" }, `due ${i.due_date}`)), h("td", { class: "num" }, money(i.balance_cents)), h("td", { class: "right" }, inp));
+				}),
+		);
+		spread();
+	}
+	/** Fills the amounts in oldest first. */
+	function spread() {
+		let left = parseDec(amount.value, 2) ?? 0n;
+		for (const [i, inp] of applyInputs) {
+			const take = left > 0n ? (left < i.balance_cents ? left : i.balance_cents) : 0n;
+			inp.value = take > 0n ? fmtDec(take, 2) : "";
+			left -= take;
+		}
+		showSum();
+	}
+	function showSum() {
+		let sum = 0n;
+		for (const inp of applyInputs.values()) sum += parseDec(inp.value || "0", 2) ?? 0n;
+		const total = parseDec(amount.value, 2) ?? 0n;
+		const owed = [...applyInputs.keys()].reduce((s, i) => s + i.balance_cents, 0n);
+		summary.textContent = `Applied ${money(sum, cur.value)} of ${money(total, cur.value)}. ${c.name} owes ${money(owed, cur.value)}.` + (sum !== total ? " The amounts applied must add up to the payment." : "");
+		summary.style.color = sum !== total ? "var(--warn)" : "";
+	}
+	amount.oninput = spread;
+	cur.onchange = drawRows;
+	const form = h(
+		"form",
+		{ method: "dialog" },
+		h("h2", {}, `Receive a payment from ${c.name}`),
+		h(
+			"div",
+			{ class: "grid" },
+			field("Amount received", amount),
+			currencies.length > 1 ? field("Currency", cur) : null,
+			field("Date", input("payment_date", todayStr(), { type: "date", required: true })),
+			field("Method", input("method", "", { list: "methods-rp", placeholder: "e.g. e-Transfer", maxlength: 50 })),
+			field("Reference", input("reference", "", { maxlength: 100, placeholder: "cheque or transfer number" })),
+		),
+		h("datalist", { id: "methods-rp" }, ["e-Transfer", "Cheque", "Cash", "Credit card", "Wire", "ACH", "PayPal"].map((m) => h("option", { value: m }))),
+		h("h2", {}, "Apply to invoices"),
+		scroll(h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Invoice"), h("th", { class: "right" }, "Balance"), h("th", { class: "right" }, "Apply"))), rowsBody)),
+		summary,
+		h("p", { class: "hint" }, "With ledger posting on, each part posts Dr bank / Cr receivable. If the money is already in the bank account from an imported statement, use Find matching deposits instead, so it isn't counted twice."),
+		h("div", { class: "actions" }, h("button", { class: "primary", type: "submit" }, "Record payment"), h("button", { type: "button", onclick: closeDialog }, "Cancel")),
+	);
+	form.onsubmit = (e) => {
+		e.preventDefault();
+		busy(e.submitter, async () => {
+			const o = formData(form);
+			const allocations = [...applyInputs].filter(([, inp]) => inp.value.trim()).map(([i, inp]) => ({ invoice_id: i.id, amount: inp.value.trim() }));
+			const r = await api(`/customers/${c.id}/payments`, { method: "POST", body: { amount: o.amount, payment_date: o.payment_date, method: o.method, reference: o.reference, allocations } });
+			closeDialog();
+			flash(`Payment recorded on ${r.invoices.map((i) => i.number).join(", ")}.`);
+			done();
+		});
+	};
+	drawRows();
+	openDialog(form);
+}
+
+/**
+ * Suggests which open invoices recent bank deposits pay (rules, plus Ledger's
+ * AI when an admin allows it) and applies the ones the user accepts.
+ */
+async function matchDepositsDialog({ customer = null } = {}, done) {
+	const list = h("div", {}, h("p", { class: "muted" }, "Looking through recent bank deposits…"));
+	const note = h("p", { class: "hint" });
+	let changed = false;
+	const d = openDialog(
+		h("h2", {}, customer ? `Deposits that may be from ${customer.name}` : "Deposits that may pay open invoices"),
+		note,
+		list,
+		h("div", { class: "actions" }, h("button", { type: "button", onclick: closeDialog }, "Close")),
+	);
+	d.addEventListener("close", () => changed && done(), { once: true });
+	let r;
+	try {
+		r = await api("/payments/match", { method: "POST", body: customer ? { customer_id: customer.id } : {} });
+	} catch (e) {
+		list.replaceChildren(h("p", { style: "color:var(--danger)" }, e.message));
+		return;
+	}
+	note.textContent =
+		`Checked ${r.deposits_checked} deposit${r.deposits_checked === 1 ? "" : "s"} from the last 90 days against ${r.open_invoices} open invoice${r.open_invoices === 1 ? "" : "s"}. ` +
+		(r.ai.used ? "Matches marked AI were suggested by Ledger's AI: check them before applying." : r.ai.problem ? `Only exact matches were checked. ${r.ai.problem}` : "");
+	if (!r.suggestions.length) {
+		list.replaceChildren(h("p", { class: "muted" }, "No likely matches. Record payments on the invoice, or use Receive payment."));
+		return;
+	}
+	list.replaceChildren(
+		...r.suggestions.map((sug) => {
+			const status = h("div", { class: "actions" });
+			const apply = h("button", {
+				class: sug.confidence === "high" ? "primary" : "",
+				onclick: (e) =>
+					busy(e.currentTarget, async () => {
+						await api("/payments/apply", {
+							method: "POST",
+							body: { entry_id: sug.entry_id, line_id: sug.line_id, allocations: sug.allocations.map((a) => ({ invoice_id: a.invoice_id, amount: fmtDec(a.amount_cents, 2) })) },
+						});
+						changed = true;
+						status.replaceChildren(h("span", { style: "color:var(--ok)" }, "Applied."));
+					}),
+			}, "Apply");
+			status.append(apply);
+			return h(
+				"div",
+				{ class: "card", style: "margin-bottom:0.6rem" },
+				h("div", {}, h("strong", {}, money(sug.remaining_cents, sug.currency)), " deposited ", sug.date, " ", h("span", { class: `badge ${sug.confidence === "high" ? "paid" : sug.confidence === "medium" ? "open" : "draft"}` }, `${sug.confidence}${sug.source === "ai" ? " · AI" : ""}`)),
+				h("div", { class: "muted" }, sug.description || "(no description)", sug.reference ? ` · ref ${sug.reference}` : ""),
+				h("div", { style: "margin-top:0.3rem" }, "Pays ", sug.allocations.map((a, i) => [i ? ", " : "", h("a", { href: `#/invoices/${a.invoice_id}`, target: "_blank" }, a.number), ` ${money(a.amount_cents)}`, customer ? "" : ` (${a.customer})`])),
+				sug.reason ? h("div", { class: "hint" }, sug.reason) : null,
+				status,
+			);
+		}),
 	);
 }
 
