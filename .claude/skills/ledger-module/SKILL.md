@@ -39,10 +39,11 @@ feature the module uses (the context file says which version added what;
   `package.json` here is only for running tests.)
 - Never edit a released migration; add the next `NNN_name.sql`.
 - Money is integer cents per currency; post to the books only with
-  `ctx.ledger.createJournalEntry(entry, req.user)`.
+  `ctx.ledger.createJournalEntry(entry, req.user)`, with `links` to the
+  record it came from (Ledger ≥ 0.11.2).
 - AI goes through `ctx.llm` and Gmail through `ctx.gmail` (Ledger ≥ 0.10.0):
   no API keys, OAuth, IMAP or Apps Script bridges of the module's own for
-  those. The admin allows the module under Settings → AI / Gmail.
+  those. The admin allows the module under Settings → LLM API / Gmail.
 - Bad input answers 4xx (`throw new ctx.HttpError(422, "…")`), never 500.
 
 ## 3. Check before saying it works
@@ -87,7 +88,12 @@ payments to the books.
   `move-settings`, `common`); `lib/` has `money.mjs`, `pdf.mjs` (PDF
   generation, no dependencies) and `mail.mjs` (its own SMTP client). Tests:
   `test/*.test.mjs` (`npm test`).
-- Needs Ledger ≥ 0.11.1. Settings are the manifest's `settings.fields`
+- Needs Ledger ≥ 0.11.2. Every entry Sales posts carries the link
+  `invoice:<id>` ("Invoice INV-1 · Acme", opening `/apps/sales?open=invoices/<id>`);
+  reversals and matched bank deposits get it with `linkJournalEntry`
+  (`linkEntry()` in `documents.mjs`, which logs instead of failing), and a
+  removed matched payment unlinks its deposit.
+- Settings are the manifest's `settings.fields`
   (Ledger's form under Settings → Sales), read through `loadSettings()` in
   `server/common.mjs`. What a form can't hold (taxes, next document numbers,
   the email check) is `ui/setup.html`, shown under the form. The module's

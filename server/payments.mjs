@@ -185,8 +185,8 @@ export function paymentRoutes(ctx, h, docs) {
 		if (!ctx.llm) return { available: false, problem: "This Ledger has no AI support." };
 		try {
 			const st = await ctx.llm.status();
-			if (!st.configured) return { available: false, problem: "No AI provider is set up. An admin can set one under Settings → AI." };
-			if (!st.allowed) return { available: false, problem: "Sales isn't allowed to use AI yet. An admin can allow it under Settings → AI." };
+			if (!st.configured) return { available: false, problem: "No LLM connection is set up. An admin can set one under Settings → LLM API." };
+			if (!st.allowed) return { available: false, problem: "Sales isn't allowed to use AI yet. An admin can allow it under Settings → LLM API." };
 			return { available: true, problem: "" };
 		} catch (e) {
 			return { available: false, problem: e.message };
