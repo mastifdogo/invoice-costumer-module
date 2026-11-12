@@ -11,7 +11,7 @@ export function settingsRoutes(ctx, h, mail) {
 	async function publicSettings(req) {
 		const { smtp_password, ...s } = await loadSettings();
 		const [email, ai] = await Promise.all([mail.status(s), aiStatus()]);
-		return { ...s, smtp_password_set: smtp_password !== "", email, email_ready: email.ready, ai, is_admin: req.user.role === "admin" };
+		return { ...s, smtp_password_set: smtp_password !== "", email, email_ready: email.ready, ai, is_admin: req.user.role === "admin", role: req.user.role };
 	}
 
 	/** Whether deposit matching can ask Ledger's AI, and if not, what to do about it. */

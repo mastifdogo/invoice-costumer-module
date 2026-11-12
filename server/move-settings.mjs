@@ -13,6 +13,10 @@ const NUMBERS = ["default_terms_days", "quote_valid_days", "estimate_valid_days"
 const BOOLEANS = ["post_to_ledger", "bcc_self"];
 
 export async function moveSettings(ctx, h, org = null) {
+	// Once copied, the old table keeps no password: Ledger's backups save every
+	// module table as a CSV (Ledger ≥ 0.13.0), and the password now lives in
+	// Ledger's secret setting.
+	await h.q(`UPDATE ${h.T("settings")} SET smtp_password = '' WHERE moved_to_ledger_settings AND smtp_password <> ''`);
 	const { rows } = await h.q(`SELECT * FROM ${h.T("settings")} WHERE id = 1 AND NOT moved_to_ledger_settings`);
 	const old = rows[0];
 	if (!old) return;
@@ -37,6 +41,6 @@ export async function moveSettings(ctx, h, org = null) {
 			ctx.log.warn("could not move a setting to Ledger's settings form", { key: k, err: e.message, ...(org ? { organization: org.name } : {}) });
 		}
 	}
-	await h.q(`UPDATE ${h.T("settings")} SET moved_to_ledger_settings = true WHERE id = 1`);
+	await h.q(`UPDATE ${h.T("settings")} SET moved_to_ledger_settings = true, smtp_password = '' WHERE id = 1`);
 	ctx.log.info("moved settings to Ledger's settings form", { moved: Object.keys(values).length - failed.length, failed: failed.length, ...(org ? { organization: org.name } : {}) });
 }

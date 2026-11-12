@@ -55,6 +55,17 @@ export function dashboardSync(ctx, h) {
 				link: openLink("payments"),
 			});
 		}
+		// Customer lists from Ledger's migration wait for someone to choose who to add.
+		const lists = (ctx.files ? await ctx.files.inbox({ kind: "customer", limit: 50 }) : []).filter((f) => f.status === "new" || f.status === "accepted");
+		if (lists.length > 0) {
+			const f = lists[0];
+			todos.set("customer-imports", {
+				title: lists.length === 1 ? `Review the customer list from ${f.meta?.source || f.filename}`.slice(0, 200) : `Review ${lists.length} customer lists`,
+				body: "Sent by Ledger's migration. Choose who to add as customers; nothing is added until you do.",
+				due: null,
+				link: openLink(lists.length === 1 ? `customers/import/${f.id}` : "customers"),
+			});
+		}
 		return todos;
 	}
 
@@ -98,7 +109,7 @@ export function dashboardSync(ctx, h) {
 		// A to-do whose document moved on (emailed, decided, deleted) is done.
 		for (const i of existing) {
 			if (wanted.has(i.key) || i.closed_at) continue;
-			if (/^(send|follow-up)-\d+$/.test(i.key) || i.key === "payment-suggestions") await d.complete(i.key);
+			if (/^(send|follow-up)-\d+$/.test(i.key) || i.key === "payment-suggestions" || i.key === "customer-imports") await d.complete(i.key);
 		}
 	}
 

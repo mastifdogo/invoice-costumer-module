@@ -5,6 +5,7 @@
 
 import { catalogRoutes } from "./server/catalog.mjs";
 import { helpers } from "./server/common.mjs";
+import { importRoutes } from "./server/imports.mjs";
 import { customerRoutes } from "./server/customers.mjs";
 import { dashboardSync } from "./server/dashboard.mjs";
 import { documentRoutes } from "./server/documents.mjs";
@@ -32,6 +33,7 @@ export default async function register(ctx) {
 	customerRoutes(routes, h);
 	const docs = documentRoutes(routes, h, mail);
 	paymentRoutes(routes, h, docs);
+	importRoutes(routes, h, dashboard);
 	searchProvider(ctx, h);
 	// Startup runs in the main books; each organization has its own documents
 	// and (Ledger ≥ 0.11.1) its own settings, so visit each one.

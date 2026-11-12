@@ -229,6 +229,7 @@ const routes = [
 	[/^\/(invoices|quotes|estimates)\/(\d+)\/edit$/, (m) => docForm(kindByPlural[m[1]], m[2])],
 	[/^\/customers$/, () => customerList()],
 	[/^\/customers\/new$/, () => customerForm(null)],
+	[/^\/customers\/import\/(\d+)$/, (m) => importView(m[1])],
 	[/^\/customers\/(\d+)$/, (m) => customerView(m[1])],
 	[/^\/customers\/(\d+)\/edit$/, (m) => customerForm(m[1])],
 	[/^\/categories$/, () => categoryList()],
@@ -792,6 +793,111 @@ async function customerList() {
 		scroll(h("table", {}, h("thead", {}, h("tr", {}, ["Name", "Company", "Email", "Phone"].map((x) => h("th", {}, x)), h("th", { class: "right" }, "Invoices"), h("th", { class: "right" }, "Outstanding"))), tbody)),
 	);
 	await load();
+	// Customer lists from Ledger's migration, waiting for someone to choose who to add.
+	const { data: lists } = await api("/imports").catch(() => ({ data: [] }));
+	const open = lists.filter((f) => f.status === "new" || f.status === "accepted");
+	if (open.length) {
+		view().querySelector("h1").after(
+			...open.map((f) =>
+				h(
+					"div",
+					{ class: "card", style: "margin-bottom:0.75rem" },
+					h("strong", {}, `Customer list from ${f.source || f.filename}`),
+					f.rows ? ` · ${f.rows} row${f.rows === 1 ? "" : "s"}` : "",
+					h("div", { class: "muted" }, `Sent by Ledger's migration ${when(f.created_at)}. Nothing is added until you choose who to add.`),
+					h("div", { class: "actions" }, h("a", { class: "button primary", href: `#/customers/import/${f.id}` }, "Review")),
+				),
+			),
+		);
+	}
+}
+
+/** One customer list from Ledger's migration: tick who to add, then Add, or Don't import. */
+async function importView(id) {
+	const [f, settings] = await Promise.all([api(`/imports/${id}`), api("/settings")]);
+	const canEdit = settings.role !== "viewer";
+	const isOpen = f.status === "new" || f.status === "accepted";
+	const boxes = new Map();
+	const count = h("span", { class: "muted" });
+	const update = () => {
+		const n = [...boxes.values()].filter((b) => b.checked).length;
+		count.textContent = `${n} of ${boxes.size} new selected`;
+	};
+	const why = { exists: "already a customer", repeat: "listed twice" };
+	const rows = f.people.map((p) => {
+		const box = h("input", { type: "checkbox", checked: p.action === "add" && isOpen, disabled: p.action !== "add" || !isOpen || !canEdit, "aria-label": `Add ${p.name}`, onchange: update });
+		if (p.action === "add") boxes.set(p.row, box);
+		return h(
+			"tr",
+			{ class: p.action === "add" ? "" : "muted" },
+			h("td", {}, box),
+			h("td", {}, p.name, p.note ? h("div", { class: "hint" }, p.note) : null),
+			h("td", {}, p.email),
+			h("td", {}, p.phone),
+			h("td", {}, p.action === "add" ? "new" : p.customer ? h("a", { href: `#/customers/${p.customer.id}` }, why[p.action]) : why[p.action]),
+		);
+	});
+	const all = h("input", {
+		type: "checkbox",
+		checked: isOpen,
+		disabled: !isOpen || !canEdit,
+		"aria-label": "Select all new customers",
+		onchange: (e) => {
+			for (const b of boxes.values()) b.checked = e.target.checked;
+			update();
+		},
+	});
+	const actions =
+		isOpen && canEdit
+			? h(
+					"div",
+					{ class: "actions" },
+					h(
+						"button",
+						{
+							class: "primary",
+							onclick: (e) =>
+								busy(e.currentTarget, async () => {
+									const chosen = [...boxes].filter(([, b]) => b.checked).map(([row]) => row);
+									if (!chosen.length) throw new Error("Tick at least one customer, or choose Don't import.");
+									const r = await api(`/imports/${id}/apply`, { method: "POST", body: { rows: chosen } });
+									flash(`${r.added} customer${r.added === 1 ? "" : "s"} added.`);
+									go("#/customers");
+								}),
+						},
+						"Add selected customers",
+					),
+					h(
+						"button",
+						{
+							class: "danger",
+							onclick: (e) =>
+								busy(e.currentTarget, async () => {
+									if (!confirm("Don't import anyone from this list?")) return;
+									await api(`/imports/${id}/reject`, { method: "POST", body: {} });
+									flash("The list wasn't imported.");
+									go("#/customers");
+								}),
+						},
+						"Don't import",
+					),
+					count,
+				)
+			: h("p", { class: "muted" }, isOpen ? "Only admins and bookkeepers can add customers." : f.result || `This list was ${f.status}.`);
+	render(
+		h("p", {}, h("a", { href: "#/customers" }, "← Customers")),
+		h("h1", {}, `Customer list from ${f.source || f.filename}`),
+		h(
+			"p",
+			{ class: "muted" },
+			`${f.filename} · sent by Ledger's migration ${when(f.created_at)}. People already in Sales (same name or email) aren't added again. New customers get the default currency and terms; add addresses and taxes afterwards.`,
+		),
+		actions,
+		f.people.length
+			? scroll(h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, all), ["Name", "Email", "Phone", ""].map((x) => h("th", {}, x)))), h("tbody", {}, rows)))
+			: h("p", { class: "muted" }, "This list has no names in it."),
+	);
+	update();
 }
 
 async function customerForm(idOrNull) {
@@ -1152,13 +1258,52 @@ async function loadAccounts() {
 	return (await api("/accounts").catch(() => ({ data: [] }))).data;
 }
 
-/** A <select> of ledger accounts in one currency, preferring the given types. */
+/**
+ * Asks Ledger to open its New account dialog over this page (Ledger ≥ 0.11.3);
+ * resolves to the account it created, or null if cancelled.
+ */
+function newAccount(defaults = {}) {
+	const id = crypto.randomUUID();
+	return new Promise((resolve) => {
+		addEventListener("message", function on(e) {
+			if (e.origin !== location.origin || e.data?.type !== "ledger-new-account-result" || e.data.id !== id) return;
+			removeEventListener("message", on);
+			resolve(e.data.account ?? null);
+		});
+		parent.postMessage({ type: "ledger-new-account", id, defaults }, location.origin);
+	});
+}
+
+const NEW_ACCOUNT = "__new__";
+
+/**
+ * A <select> of ledger accounts in one currency, preferring the given types,
+ * ending with "+ New account…" (Ledger's dialog; the new account is added and
+ * selected, and `accounts` gets it too so other dropdowns offer it).
+ */
 function accountSelect(name, accounts, cur, types, value) {
 	let list = accounts.filter((a) => a.currency === cur && types.includes(a.type));
 	if (!list.length) list = accounts.filter((a) => a.currency === cur);
 	const opts = [["", "— none —"], ...list.map((a) => [a.code, `${a.code} ${a.name}`])];
 	if (value && !opts.some(([v]) => v === value)) opts.push([value, value]);
-	return select(name, value ?? "", opts);
+	opts.push([NEW_ACCOUNT, "+ New account…"]);
+	const sel = select(name, value ?? "", opts);
+	let last = sel.value;
+	sel.addEventListener("change", async () => {
+		if (sel.value !== NEW_ACCOUNT) {
+			last = sel.value;
+			return;
+		}
+		sel.value = last;
+		const a = await newAccount({ type: types[0], currency: cur });
+		if (!a) return;
+		if (!accounts.some((x) => x.code === a.code)) accounts.push(a);
+		if (a.currency === cur) {
+			sel.insertBefore(h("option", { value: a.code }, `${a.code} ${a.name}`), sel.lastElementChild);
+			sel.value = last = a.code;
+		} else flash(`Created ${a.code} ${a.name}, but it's in ${a.currency}, not ${cur}.`, "error");
+	});
+	return sel;
 }
 
 async function categoryList(range = {}) {
