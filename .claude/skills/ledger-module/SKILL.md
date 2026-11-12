@@ -93,7 +93,17 @@ payments to the books.
   `move-settings`, `common`); `lib/` has `money.mjs`, `pdf.mjs` (PDF
   generation, no dependencies) and `mail.mjs` (its own SMTP client). Tests:
   `test/*.test.mjs` (`npm test`).
-- Needs Ledger ≥ 0.11.2. Every entry Sales posts carries the link
+- Needs Ledger ≥ 0.12.0. Customer lists: the manifest accepts `customer`
+  files; `server/imports.mjs` reads them with `lib/csv.mjs` (the same rules
+  as Ledger's reader, so `meta.header_row` lines up), previews who's new,
+  existing or repeated, and adds only the rows a person ticks, then marks the
+  file done or rejected. The dashboard to-do is `customer-imports`.
+- Account dropdowns (`accountSelect()` in `ui/app.js`) end with
+  "+ New account…" (`newAccount()`, the `ledger-new-account` message).
+- Backups copy module tables to CSV (Ledger 0.13.0): keep secrets out of
+  tables. `move-settings.mjs` clears the old table's `smtp_password` once
+  it's copied.
+- Every entry Sales posts carries the link
   `invoice:<id>` ("Invoice INV-1 · Acme", opening `/apps/sales?open=invoices/<id>`);
   reversals and matched bank deposits get it with `linkJournalEntry`
   (`linkEntry()` in `documents.mjs`, which logs instead of failing), and a

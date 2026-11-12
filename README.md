@@ -41,6 +41,14 @@ in Ledger's sidebar as **Sales**, with a hammer icon, and lets you:
   to-do to follow up on each sent quote or estimate. They clear themselves
   when the invoice is emailed or paid, or the quote is decided. Each one
   opens the document it's about.
+- **bring in customers from other software**: when you migrate to Ledger
+  (Settings → Import & export → Migrate), Ledger sends the customer list to
+  Sales. The Customers tab (and a dashboard to-do) shows it: who's new and
+  who's already a customer, with a box to tick for each. Only the people you
+  choose are added; **Don't import** sets the list aside.
+- **create accounts on the spot**: the account dropdowns for categories and
+  taxes end with **+ New account…**, which opens Ledger's New account
+  dialog and selects the new account, without losing what you'd filled in.
 - **find things from Ledger's search bar**: customers, and invoices, quotes
   and estimates by number, customer or PO number.
 - optionally **post to the books**: issuing an invoice posts Dr receivable,
@@ -57,9 +65,9 @@ side pane.
 
 ## Install
 
-Needs **Ledger 0.11.2 or newer** (journal entry links, settings per
-organization, plus the settings form, Gmail, search and user roles from
-earlier versions). In
+Needs **Ledger 0.12.0 or newer** (customer lists from Ledger's migration,
+"+ New account…", journal entry links, settings per organization, plus the
+settings form, Gmail, search and user roles from earlier versions). In
 Ledger, open **Settings → Modules**, enter `mastifdogo/sales_module` and add it.
 Ledger installs the latest GitHub Release, creates the module's database
 schema (`mod_sales`) and adds **Sales** to the sidebar. You can hide or move
@@ -83,6 +91,10 @@ businesses, invoice separately. Each organization's admins fill in
 
 ### Changes
 
+- **0.5.0**: customer lists from Ledger's migration, reviewed before
+  anyone is added; "+ New account…" in account dropdowns; the old settings
+  table no longer keeps an SMTP password (Ledger 0.13.0 backups copy module
+  tables to CSV). Needs Ledger 0.12.0.
 - **0.4.1**: in lists and a customer's Transactions, the whole row opens
   the record (click, or Enter from the keyboard); numbers are plain text.
 - **0.4.0**: journal entries Sales posts, reversals, and matched bank
