@@ -144,3 +144,85 @@ export function importRoutes(ctx, h, dashboard) {
 		dashboard.schedule(org?.id);
 	});
 }
+
+// "Import customers from CSV" on Sales' page under Settings → Modules
+// (ctx.imports, Ledger ≥ 0.13.2). Ledger reads the file, matches its columns
+// to these fields and converts the values; the dry run shows the user what
+// would happen, and nothing is added until they press Import.
+const FIELDS = [
+	{ key: "name", label: "Customer name", required: true },
+	{ key: "company", label: "Company" },
+	{ key: "email", label: "Email" },
+	{ key: "phone", label: "Phone" },
+	{ key: "address", label: "Billing address" },
+	{ key: "tax_id", label: "GST number", help: "The customer's GST/HST or other tax number" },
+	{ key: "currency", label: "Currency", help: "CAD or USD; empty uses the default currency" },
+	{ key: "terms_days", label: "Payment terms (days)", type: "number", help: "Days until invoices are due; empty uses the default" },
+	{ key: "notes", label: "Notes" },
+];
+const LIMITS = { name: 200, company: 200, email: 254, phone: 50, address: 1000, tax_id: 50, notes: 5000 };
+
+export function csvImport(ctx, h) {
+	if (!ctx.imports) return;
+	const { T, q, loadSettings } = h;
+	const CURRENCIES = ["CAD", "USD"];
+
+	ctx.imports.provide({
+		label: "Customers",
+		description: "Customer contact details. Anyone already in Sales (same name or email), or listed twice, is skipped.",
+		fields: FIELDS,
+		async handler(rows, { dryRun, user }) {
+			const s = await loadSettings();
+			const { rows: existing } = await q(`SELECT lower(name) AS lname, lower(email) AS lemail FROM ${T("customers")}`);
+			const names = new Set(existing.map((c) => c.lname));
+			const emails = new Set(existing.filter((c) => c.lemail).map((c) => c.lemail));
+			const errors = [];
+			const add = [];
+			let exists = 0;
+			let repeats = 0;
+			const seen = new Set();
+			for (const r of rows) {
+				const c = {};
+				const problems = [];
+				for (const [k, max] of Object.entries(LIMITS)) {
+					const v = r[k] == null ? "" : String(r[k]).trim();
+					if (v.length > max) problems.push(`${k.replace("_", " ")} is longer than ${max} characters`);
+					c[k] = k === "address" || k === "notes" ? v : v.replace(/\s+/g, " ");
+				}
+				if (c.email && !isEmail(c.email)) problems.push(`"${c.email}" isn't an email address`);
+				const cur = r.currency == null || String(r.currency).trim() === "" ? s.default_currency || "CAD" : String(r.currency).trim().toUpperCase();
+				if (!CURRENCIES.includes(cur)) problems.push(`currency must be ${CURRENCIES.join(" or ")}`);
+				c.currency = cur;
+				c.terms_days = r.terms_days == null ? null : Number(r.terms_days);
+				if (c.terms_days !== null && !(Number.isInteger(c.terms_days) && c.terms_days >= 0 && c.terms_days <= 365)) problems.push("payment terms must be a whole number of days from 0 to 365");
+				if (problems.length) {
+					errors.push({ row: r._row, message: `${c.name || "This row"}: ${problems.join("; ")}` });
+					continue;
+				}
+				const key = c.name.toLowerCase();
+				if (names.has(key) || (c.email && emails.has(c.email.toLowerCase()))) exists++;
+				else if (seen.has(key)) repeats++;
+				else add.push(c);
+				seen.add(key);
+			}
+			const skipped = [exists ? `${exists} already in Sales` : "", repeats ? `${repeats} listed twice` : ""].filter(Boolean).join(", ");
+			const tail = skipped ? `; skipping ${skipped}` : "";
+			const n = (k) => `${k} customer${k === 1 ? "" : "s"}`;
+			if (dryRun) return { summary: `Would add ${n(add.length)}${tail}.`, errors };
+			if (errors.length) throw new ctx.HttpError(422, `${errors.length} row${errors.length === 1 ? " needs" : "s need"} fixing first`);
+			// One statement, so it's all or nothing; a name added meanwhile is skipped, not doubled.
+			const col = (k) => add.map((c) => c[k]);
+			const { rows: added } = await q(
+				`INSERT INTO ${T("customers")} (name, company, email, phone, address, tax_id, currency, terms_days, notes)
+				 SELECT t.* FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::int[], $9::text[])
+				        AS t(name, company, email, phone, address, tax_id, currency, terms_days, notes)
+				  WHERE NOT EXISTS (SELECT 1 FROM ${T("customers")} c WHERE lower(c.name) = lower(t.name))
+				 RETURNING id`,
+				["name", "company", "email", "phone", "address", "tax_id", "currency", "terms_days", "notes"].map(col),
+			);
+			ctx.log.info("customers imported from CSV", { added: added.length, user: user?.username });
+			const late = add.length - added.length;
+			return { summary: `Added ${n(added.length)}${tail}${late ? `; ${late} were added by someone else meanwhile` : ""}.` };
+		},
+	});
+}

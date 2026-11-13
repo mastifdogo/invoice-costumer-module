@@ -46,6 +46,13 @@ in Ledger's sidebar as **Sales**, with a hammer icon, and lets you:
   Sales. The Customers tab (and a dashboard to-do) shows it: who's new and
   who's already a customer, with a box to tick for each. Only the people you
   choose are added; **Don't import** sets the list aside.
+- **import customers from a CSV file**: Settings → Sales has an **Import
+  customers from CSV** card (Ledger's). Any spreadsheet export works: Ledger
+  matches the columns (name, company, email, phone, address, GST number,
+  currency, payment terms, notes) and shows what Sales would do first:
+  "Would add 12 customers; skipping 2 already in Sales". Rows with a bad
+  email or currency are listed to fix, and nothing is added until you press
+  Import. Importing the same file twice adds nobody.
 - **create accounts on the spot**: the account dropdowns for categories and
   taxes end with **+ New account…**, which opens Ledger's New account
   dialog and selects the new account, without losing what you'd filled in.
@@ -65,7 +72,7 @@ side pane.
 
 ## Install
 
-Needs **Ledger 0.12.0 or newer** (customer lists from Ledger's migration,
+Needs **Ledger 0.13.2 or newer** (Import from CSV, customer lists from Ledger's migration,
 "+ New account…", journal entry links, settings per organization, plus the
 settings form, Gmail, search and user roles from earlier versions). In
 Ledger, open **Settings → Modules**, enter `mastifdogo/sales_module` and add it.
@@ -91,6 +98,8 @@ businesses, invoice separately. Each organization's admins fill in
 
 ### Changes
 
+- **0.6.0**: import customers from a CSV file (Settings → Sales; Ledger's
+  Import from CSV). Needs Ledger 0.13.2.
 - **0.5.0**: customer lists from Ledger's migration, reviewed before
   anyone is added; "+ New account…" in account dropdowns; the old settings
   table no longer keeps an SMTP password (Ledger 0.13.0 backups copy module

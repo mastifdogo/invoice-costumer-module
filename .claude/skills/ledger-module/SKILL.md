@@ -93,7 +93,14 @@ payments to the books.
   `move-settings`, `common`); `lib/` has `money.mjs`, `pdf.mjs` (PDF
   generation, no dependencies) and `mail.mjs` (its own SMTP client). Tests:
   `test/*.test.mjs` (`npm test`).
-- Needs Ledger ≥ 0.12.0. Customer lists: the manifest accepts `customer`
+- Needs Ledger ≥ 0.13.2. Import from CSV: `csvImport()` in
+  `server/imports.mjs` calls `ctx.imports.provide` with the customer fields;
+  the dry run reports bad rows as `errors` (they block the import) and skips
+  names or emails already in Sales, or repeated, saying so in `summary`. The
+  real run inserts in one statement that never doubles a name.
+- Sales keeps no files (PDFs are made on request), so it doesn't use
+  `ctx.storage` and has no `bytea` columns.
+- Customer lists: the manifest accepts `customer`
   files; `server/imports.mjs` reads them with `lib/csv.mjs` (the same rules
   as Ledger's reader, so `meta.header_row` lines up), previews who's new,
   existing or repeated, and adds only the rows a person ticks, then marks the
