@@ -9,9 +9,19 @@ import { decodeText, parseDelimited } from "../lib/csv.mjs";
 import { isEmail } from "../lib/mail.mjs";
 
 const OPEN = ["new", "accepted"];
+// Ledger's migration sends "customer" lists; modules hand each other "entity"
+// lists (Ledger ≥ 0.16.0) with a role column (customer, vendor or both).
+export const LIST_KINDS = ["customer", "entity"];
 
-export function importRoutes(ctx, h, dashboard) {
-	const { T, q, bad, notFound, conflict, body, loadSettings } = h;
+/** Lists in this organization's inbox that Sales takes, newest first. */
+export async function customerLists(ctx) {
+	if (!ctx.files) return [];
+	const all = (await Promise.all(LIST_KINDS.map((kind) => ctx.files.inbox({ kind, limit: 50 })))).flat();
+	return all.sort((a, b) => Number(b.id) - Number(a.id));
+}
+
+export function importRoutes(ctx, h, dashboard, store) {
+	const { q, bad, notFound, conflict, body, CUSTOMERS } = h;
 
 	/** A customer file in this organization's inbox, or 404. */
 	async function getFile(id) {
@@ -22,7 +32,7 @@ export function importRoutes(ctx, h, dashboard) {
 		} catch {
 			throw notFound("customer list");
 		}
-		if (!f || f.kind !== "customer" || f.recipient !== "sales") throw notFound("customer list");
+		if (!f || !LIST_KINDS.includes(f.kind) || f.recipient !== "sales") throw notFound("customer list");
 		return f;
 	}
 
@@ -47,10 +57,10 @@ export function importRoutes(ctx, h, dashboard) {
 			const name = meta.columns?.[field];
 			return typeof name === "string" ? headers.indexOf(name) : -1;
 		};
-		const [ni, ei, pi] = [col("name"), col("email"), col("phone")];
+		const [ni, ei, pi, ri] = [col("name"), col("email"), col("phone"), col("role")];
 		if (ni < 0) throw bad("this list has no column for the customer's name");
 
-		const { rows: existing } = await q(`SELECT id, name, lower(name) AS lname, lower(email) AS lemail FROM ${T("customers")}`);
+		const { rows: existing } = await q(`SELECT id, name, lower(name) AS lname, lower(email) AS lemail FROM ${CUSTOMERS} c`);
 		const byName = new Map(existing.map((c) => [c.lname, c]));
 		const byEmail = new Map(existing.filter((c) => c.lemail).map((c) => [c.lemail, c]));
 		const seen = new Map();
@@ -59,6 +69,8 @@ export function importRoutes(ctx, h, dashboard) {
 			const r = rows[i];
 			const name = clip(r[ni], 200);
 			if (!name) continue;
+			// An entity list's vendors aren't customers.
+			if (ri >= 0 && /^vendors?$/i.test(clip(r[ri], 20))) continue;
 			let email = ei >= 0 ? clip(r[ei], 254) : "";
 			const note = email && !isEmail(email) ? `"${email}" isn't an email address; left out` : "";
 			if (note) email = "";
@@ -85,8 +97,7 @@ export function importRoutes(ctx, h, dashboard) {
 	});
 
 	ctx.route("GET", "/imports", async () => {
-		const files = await ctx.files.inbox({ kind: "customer", limit: 50 });
-		return { data: files.map(summary) };
+		return { data: (await customerLists(ctx)).map(summary) };
 	});
 
 	ctx.route("GET", "/imports/:id", async (req) => {
@@ -110,18 +121,10 @@ export function importRoutes(ctx, h, dashboard) {
 		const blocked = chosen.filter((p) => p.action !== "add");
 		if (blocked.length) throw conflict(`${blocked[0].name} is already a customer or listed twice; reload the list`);
 
-		const s = await loadSettings();
 		const from = [f.meta?.source, f.filename].filter(Boolean).join(", ");
-		// One statement, and never a second customer with the same name: a
-		// double click or two people approving at once can't add anyone twice.
-		const { rows: added } = await q(
-			`INSERT INTO ${T("customers")} (name, email, phone, currency, notes)
-			 SELECT t.name, t.email, t.phone, $4, $5
-			   FROM unnest($1::text[], $2::text[], $3::text[]) AS t(name, email, phone)
-			  WHERE NOT EXISTS (SELECT 1 FROM ${T("customers")} c WHERE lower(c.name) = lower(t.name))
-			 RETURNING id`,
-			[chosen.map((p) => p.name), chosen.map((p) => p.email), chosen.map((p) => p.phone), s.default_currency ?? "CAD", `Imported from ${from}`.slice(0, 5000)],
-		);
+		// Each goes into Ledger's shared list (or joins the entity with that
+		// name); someone added meanwhile, e.g. by a double click, isn't doubled.
+		const added = await store.addMany(chosen.map((p) => ({ contact: { name: p.name, email: p.email, phone: p.phone, notes: `Imported from ${from}`.slice(0, 5000) }, own: {} })));
 		const skipped = people.length - added.length;
 		const result = `${added.length} customer${added.length === 1 ? "" : "s"} added by ${req.user.username}${skipped ? `; ${skipped} not added` : ""}`;
 		await ctx.files.update(f.id, { status: "done", result });
@@ -162,9 +165,9 @@ const FIELDS = [
 ];
 const LIMITS = { name: 200, company: 200, email: 254, phone: 50, address: 1000, tax_id: 50, notes: 5000 };
 
-export function csvImport(ctx, h) {
+export function csvImport(ctx, h, store) {
 	if (!ctx.imports) return;
-	const { T, q, loadSettings } = h;
+	const { q, loadSettings, CUSTOMERS } = h;
 	const CURRENCIES = ["CAD", "USD"];
 
 	ctx.imports.provide({
@@ -173,7 +176,7 @@ export function csvImport(ctx, h) {
 		fields: FIELDS,
 		async handler(rows, { dryRun, user }) {
 			const s = await loadSettings();
-			const { rows: existing } = await q(`SELECT lower(name) AS lname, lower(email) AS lemail FROM ${T("customers")}`);
+			const { rows: existing } = await q(`SELECT lower(name) AS lname, lower(email) AS lemail FROM ${CUSTOMERS} c`);
 			const names = new Set(existing.map((c) => c.lname));
 			const emails = new Set(existing.filter((c) => c.lemail).map((c) => c.lemail));
 			const errors = [];
@@ -210,15 +213,13 @@ export function csvImport(ctx, h) {
 			const n = (k) => `${k} customer${k === 1 ? "" : "s"}`;
 			if (dryRun) return { summary: `Would add ${n(add.length)}${tail}.`, errors };
 			if (errors.length) throw new ctx.HttpError(422, `${errors.length} row${errors.length === 1 ? " needs" : "s need"} fixing first`);
-			// One statement, so it's all or nothing; a name added meanwhile is skipped, not doubled.
-			const col = (k) => add.map((c) => c[k]);
-			const { rows: added } = await q(
-				`INSERT INTO ${T("customers")} (name, company, email, phone, address, tax_id, currency, terms_days, notes)
-				 SELECT t.* FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::int[], $9::text[])
-				        AS t(name, company, email, phone, address, tax_id, currency, terms_days, notes)
-				  WHERE NOT EXISTS (SELECT 1 FROM ${T("customers")} c WHERE lower(c.name) = lower(t.name))
-				 RETURNING id`,
-				["name", "company", "email", "phone", "address", "tax_id", "currency", "terms_days", "notes"].map(col),
+			// Into Ledger's shared list, each joining the entity with its name if
+			// there is one; a name added meanwhile is skipped, not doubled.
+			const added = await store.addMany(
+				add.map((c) => ({
+					contact: { name: c.name, email: c.email, phone: c.phone, address: c.address, notes: c.notes },
+					own: { company: c.company, tax_id: c.tax_id, currency: c.currency, terms_days: c.terms_days },
+				})),
 			);
 			ctx.log.info("customers imported from CSV", { added: added.length, user: user?.username });
 			const late = add.length - added.length;

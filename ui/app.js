@@ -229,6 +229,7 @@ const routes = [
 	[/^\/(invoices|quotes|estimates)\/(\d+)\/edit$/, (m) => docForm(kindByPlural[m[1]], m[2])],
 	[/^\/customers$/, () => customerList()],
 	[/^\/customers\/new$/, () => customerForm(null)],
+	[/^\/customers\/move$/, () => moveView()],
 	[/^\/customers\/import\/(\d+)$/, (m) => importView(m[1])],
 	[/^\/customers\/(\d+)$/, (m) => customerView(m[1])],
 	[/^\/customers\/(\d+)\/edit$/, (m) => customerForm(m[1])],
@@ -793,6 +794,18 @@ async function customerList() {
 		scroll(h("table", {}, h("thead", {}, h("tr", {}, ["Name", "Company", "Email", "Phone"].map((x) => h("th", {}, x)), h("th", { class: "right" }, "Invoices"), h("th", { class: "right" }, "Outstanding"))), tbody)),
 	);
 	await load();
+	const move = await api("/customers/move").catch(() => ({ pending: 0 }));
+	if (move.pending > 0) {
+		view().querySelector("h1").after(
+			h(
+				"div",
+				{ class: "card", style: "margin-bottom:0.75rem" },
+				h("strong", {}, `${move.pending} customer${move.pending === 1 ? " is" : "s are"} kept only in Sales`),
+				h("div", { class: "muted" }, "Ledger now keeps customers and vendors in one list (Entities in the sidebar) that every module shares. Move them across so they're the same everywhere."),
+				h("div", { class: "actions" }, h("a", { class: "button primary", href: "#/customers/move" }, "Review the move")),
+			),
+		);
+	}
 	// Customer lists from Ledger's migration, waiting for someone to choose who to add.
 	const { data: lists } = await api("/imports").catch(() => ({ data: [] }));
 	const open = lists.filter((f) => f.status === "new" || f.status === "accepted");
@@ -810,6 +823,62 @@ async function customerList() {
 			),
 		);
 	}
+}
+
+/** Moving Sales' own customers into Ledger's shared list: what happens to each, then Move. */
+async function moveView() {
+	const [plan, settings] = await Promise.all([api("/customers/move"), api("/settings")]);
+	const canEdit = settings.role !== "viewer";
+	if (plan.pending === 0) {
+		return render(h("p", {}, h("a", { href: "#/customers" }, "← Customers")), h("h1", {}, "Customers are in Ledger's list"), h("p", { class: "muted" }, "Every Sales customer is in Ledger's shared list of customers and vendors."));
+	}
+	const links = plan.data.filter((r) => r.action === "link").length;
+	const what = (r) =>
+		r.action === "create"
+			? `added to the list${r.archived ? " (inactive, as it's archived)" : ""}`
+			: `joins ${r.entity.name}${r.entity.is_customer ? "" : r.entity.is_vendor ? " (a vendor; becomes a customer too)" : ""}`;
+	render(
+		h("p", {}, h("a", { href: "#/customers" }, "← Customers")),
+		h("h1", {}, "Move customers into Ledger's list"),
+		h(
+			"p",
+			{ class: "muted" },
+			"Ledger keeps customers and vendors in one list that Ledger and every module share (Entities in the sidebar). Each customer below goes there: one with the same name as an entry already in the list joins it, the others are added. Their name, email, phone, address and notes then live in that list; company, Cc addresses, tax number, currency, payment terms and taxes stay in Sales. Invoices, quotes, estimates and payments don't change.",
+		),
+		canEdit
+			? h(
+					"div",
+					{ class: "actions" },
+					h(
+						"button",
+						{
+							class: "primary",
+							onclick: (e) =>
+								busy(e.currentTarget, async () => {
+									const r = await api("/customers/move", { method: "POST", body: {} });
+									const done = r.linked + r.created;
+									flash(`${done} customer${done === 1 ? "" : "s"} moved${r.failed.length ? `; ${r.failed.length} couldn't be (${r.failed.map((f) => `${f.name}: ${f.error}`).join("; ")})` : ""}.`, r.failed.length ? "error" : "ok");
+									go("#/customers");
+								}),
+						},
+						`Move ${plan.pending} customer${plan.pending === 1 ? "" : "s"}`,
+					),
+					h("span", { class: "muted" }, `${links} join${links === 1 ? "s" : ""} an existing entry, ${plan.pending - links} new`),
+				)
+			: h("p", { class: "muted" }, "An admin or bookkeeper can approve the move."),
+		scroll(
+			h(
+				"table",
+				{},
+				h("thead", {}, h("tr", {}, ["Customer", "Email", "Phone", "What happens"].map((x) => h("th", {}, x)))),
+				h(
+					"tbody",
+					{},
+					plan.data.map((r) => h("tr", {}, h("td", {}, r.name, r.archived ? h("span", { class: "muted" }, " (archived)") : null), h("td", {}, r.email), h("td", {}, r.phone), h("td", {}, what(r)))),
+				),
+			),
+		),
+	);
 }
 
 /** One customer list from Ledger's migration: tick who to add, then Add, or Don't import. */
@@ -927,6 +996,7 @@ async function customerForm(idOrNull) {
 			field("Private notes", textarea("notes", cust.notes, { rows: 3, maxlength: 5000 }), "wide"),
 			c ? h("label", { class: "check wide" }, h("input", { type: "checkbox", name: "archived", checked: c.archived }), h("span", {}, "Archived (hidden from lists and new documents)")) : null,
 		),
+		!c || c.entity_id != null ? h("p", { class: "hint" }, "Name, email, phone, address and notes are shared with Ledger's list of customers and vendors (Entities), so they're the same in every module.") : null,
 		h(
 			"div",
 			{ class: "actions" },
@@ -1276,6 +1346,26 @@ function newAccount(defaults = {}) {
 
 const NEW_ACCOUNT = "__new__";
 
+/** Accounts in chart order with sub-accounts right under their parent: [{ a, depth }]. */
+function accountTree(list) {
+	const codes = new Set(list.map((a) => a.code));
+	const kids = new Map();
+	for (const a of list) {
+		const p = a.parent_code && codes.has(a.parent_code) ? a.parent_code : "";
+		if (!kids.has(p)) kids.set(p, []);
+		kids.get(p).push(a);
+	}
+	const out = [];
+	const walk = (p, depth) => {
+		for (const a of (kids.get(p) ?? []).sort((x, y) => x.code.localeCompare(y.code, undefined, { numeric: true }))) {
+			out.push({ a, depth });
+			if (depth < 6) walk(a.code, depth + 1);
+		}
+	};
+	walk("", 0);
+	return out;
+}
+
 /**
  * A <select> of ledger accounts in one currency, preferring the given types,
  * ending with "+ New account…" (Ledger's dialog; the new account is added and
@@ -1284,7 +1374,7 @@ const NEW_ACCOUNT = "__new__";
 function accountSelect(name, accounts, cur, types, value) {
 	let list = accounts.filter((a) => a.currency === cur && types.includes(a.type));
 	if (!list.length) list = accounts.filter((a) => a.currency === cur);
-	const opts = [["", "— none —"], ...list.map((a) => [a.code, `${a.code} ${a.name}`])];
+	const opts = [["", "— none —"], ...accountTree(list).map(({ a, depth }) => [a.code, `${"\u00a0\u00a0\u00a0".repeat(depth)}${a.code} ${a.name}`])];
 	if (value && !opts.some(([v]) => v === value)) opts.push([value, value]);
 	opts.push([NEW_ACCOUNT, "+ New account…"]);
 	const sel = select(name, value ?? "", opts);

@@ -9,13 +9,13 @@ const MAX_DEPOSITS = 40;
 const MAX_INVOICES = 80;
 
 export function paymentRoutes(ctx, h, docs) {
-	const { T, q, bad, notFound, conflict, body, text, dateField, decimal, id, isId, loadSettings } = h;
+	const { T, q, bad, notFound, conflict, body, text, dateField, decimal, id, isId, loadSettings, CUSTOMERS } = h;
 
 	async function openInvoices(customerId = null) {
 		const { rows } = await q(
 			`SELECT d.id, d.number, d.currency, d.total_cents - d.paid_cents AS balance_cents, d.issue_date::text, d.due_date::text,
 			        d.po_number, d.journal_entry_id, d.customer_id, c.name AS customer, c.company
-			   FROM ${T("documents")} d JOIN ${T("customers")} c ON c.id = d.customer_id
+			   FROM ${T("documents")} d JOIN ${CUSTOMERS} c ON c.id = d.customer_id
 			  WHERE d.kind = 'invoice' AND d.status = 'open' AND ($1::bigint IS NULL OR d.customer_id = $1::bigint)
 			  ORDER BY d.due_date, d.issue_date, d.id
 			  LIMIT 500`,
@@ -69,7 +69,7 @@ export function paymentRoutes(ctx, h, docs) {
 	ctx.route("POST", "/customers/:id/payments", async (req) => {
 		const cid = id(req, "id", "customer");
 		const o = body(req);
-		const { rows } = await q(`SELECT id, currency FROM ${T("customers")} WHERE id = $1`, [cid]);
+		const { rows } = await q(`SELECT id, currency FROM ${CUSTOMERS} x WHERE id = $1`, [cid]);
 		if (!rows[0]) throw notFound("customer");
 		const date = o.payment_date === undefined || o.payment_date === "" ? today() : dateField(o.payment_date, "payment_date");
 		const method = text(o, "method", 50);
@@ -274,7 +274,7 @@ export function paymentRoutes(ctx, h, docs) {
 			? (
 					await q(
 						`SELECT d.id, d.number, d.status, d.customer_id, d.total_cents - d.paid_cents AS balance_cents, c.name AS customer
-						   FROM ${T("documents")} d JOIN ${T("customers")} c ON c.id = d.customer_id WHERE d.id = ANY($1::bigint[])`,
+						   FROM ${T("documents")} d JOIN ${CUSTOMERS} c ON c.id = d.customer_id WHERE d.id = ANY($1::bigint[])`,
 						[ids],
 					)
 				).rows

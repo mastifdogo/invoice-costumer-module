@@ -9,7 +9,7 @@ export const openLink = (path) => `/apps/sales?open=${encodeURIComponent(path)}`
 
 export function searchProvider(ctx, h) {
 	if (!ctx.search?.provide) return;
-	const { T, q, like } = h;
+	const { T, q, like, CUSTOMERS } = h;
 	ctx.search.provide(async (query, { limit }) => {
 		const term = String(query ?? "").trim();
 		if (term.length < 2) return [];
@@ -18,14 +18,14 @@ export function searchProvider(ctx, h) {
 		const [docs, customers] = await Promise.all([
 			q(
 				`SELECT d.id, d.kind, d.number, d.status, d.currency, d.total_cents, d.issue_date::text, c.name AS customer
-				   FROM ${T("documents")} d JOIN ${T("customers")} c ON c.id = d.customer_id
+				   FROM ${T("documents")} d JOIN ${CUSTOMERS} c ON c.id = d.customer_id
 				  WHERE d.number ILIKE $1 OR c.name ILIKE $1 OR c.company ILIKE $1 OR d.po_number ILIKE $1
 				  ORDER BY (d.number ILIKE $1) DESC, d.issue_date DESC, d.id DESC
 				  LIMIT $2`,
 				[pattern, max],
 			),
 			q(
-				`SELECT id, name, company, email FROM ${T("customers")}
+				`SELECT id, name, company, email FROM ${CUSTOMERS} c
 				  WHERE name ILIKE $1 OR company ILIKE $1 OR email ILIKE $1
 				  ORDER BY archived, lower(name) LIMIT $2`,
 				[pattern, max],
