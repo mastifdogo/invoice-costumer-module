@@ -187,5 +187,23 @@ export function helpers(ctx) {
 		return ids;
 	}
 
-	return { T, q, bad, notFound, conflict, body, text, intIn, bool, dateField, currency, decimal, rate, id, isId, idList, like, loadSettings, requireAdmin, checkAccount, accountMap, checkTaxIds };
+	/**
+	 * Sales' customers as one table to read from: a row linked to Ledger's
+	 * shared list (entities, Ledger ≥ 0.16.0) takes its name, email, phone,
+	 * address and notes from there; a row from before the move still has its
+	 * own. Use it as `${CUSTOMERS} c` in SELECTs; write to T("customers").
+	 */
+	const CUSTOMERS = `(SELECT c.id, c.entity_id,
+	        coalesce(e.name, nullif(c.name, ''), '(missing customer)') AS name,
+	        CASE WHEN c.entity_id IS NULL THEN c.email ELSE coalesce(e.email, '') END AS email,
+	        CASE WHEN c.entity_id IS NULL THEN c.phone ELSE coalesce(e.phone, '') END AS phone,
+	        CASE WHEN c.entity_id IS NULL THEN c.address ELSE coalesce(e.address, '') END AS address,
+	        CASE WHEN c.entity_id IS NULL THEN c.notes ELSE coalesce(e.notes, '') END AS notes,
+	        c.company, c.cc_emails, c.tax_id, c.currency, c.terms_days, c.tax_ids,
+	        c.archived OR coalesce(NOT e.is_active, false) AS archived,
+	        coalesce(e.is_active, false) AS entity_active,
+	        c.created_at, c.updated_at
+	   FROM ${T("customers")} c LEFT JOIN public.entities e ON e.id = c.entity_id)`;
+
+	return { T, q, bad, notFound, conflict, body, text, intIn, bool, dateField, currency, decimal, rate, id, isId, idList, like, loadSettings, requireAdmin, checkAccount, accountMap, checkTaxIds, CUSTOMERS };
 }

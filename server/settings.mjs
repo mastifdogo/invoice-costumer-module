@@ -5,7 +5,7 @@
 import { today } from "../lib/money.mjs";
 
 export function settingsRoutes(ctx, h, mail) {
-	const { T, q, body, intIn, loadSettings, requireAdmin } = h;
+	const { T, q, body, intIn, loadSettings, requireAdmin, CUSTOMERS } = h;
 
 	/** Settings for the page: never the SMTP password. */
 	async function publicSettings(req) {
@@ -65,7 +65,7 @@ export function settingsRoutes(ctx, h, mail) {
 
 	ctx.route("GET", "/accounts", async () => {
 		const accounts = await ctx.ledger.listAccounts();
-		return { data: accounts.map((a) => ({ code: a.code, name: a.name, type: a.type, currency: a.currency })) };
+		return { data: accounts.map((a) => ({ code: a.code, name: a.name, type: a.type, currency: a.currency, parent_code: a.parent_code ?? null, kind: a.kind ?? null })) };
 	});
 
 	ctx.route("GET", "/summary", async () => {
@@ -83,7 +83,7 @@ export function settingsRoutes(ctx, h, mail) {
 		);
 		const counts = await q(
 			`SELECT (SELECT count(*) FROM ${T("documents")} WHERE kind = 'invoice' AND status IN ('draft', 'posting')) AS drafts,
-			        (SELECT count(*) FROM ${T("customers")} WHERE NOT archived) AS customers`,
+			        (SELECT count(*) FROM ${CUSTOMERS} x WHERE NOT archived) AS customers`,
 		);
 		return { currencies: rows, ...counts.rows[0] };
 	});

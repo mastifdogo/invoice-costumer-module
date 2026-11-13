@@ -11,6 +11,7 @@
 
 import { formatMoney, today } from "../lib/money.mjs";
 import { KINDS } from "./common.mjs";
+import { customerLists } from "./imports.mjs";
 import { openLink } from "./search.mjs";
 
 const MAX_ITEMS = 50;
@@ -19,7 +20,7 @@ const HOURLY = 60 * 60 * 1000;
 export function dashboardSync(ctx, h) {
 	const d = ctx.dashboard;
 	if (!d) return { schedule() {}, start() {} };
-	const { T, q } = h;
+	const { T, q, CUSTOMERS } = h;
 	let timer = null;
 	let running = null;
 	// Organizations waiting for a sync; "all" means every one.
@@ -29,7 +30,7 @@ export function dashboardSync(ctx, h) {
 	async function wantedTodos() {
 		const { rows } = await q(
 			`SELECT d.id, d.kind, d.number, d.status, d.issue_date::text, d.due_date::text, d.sent_at, c.name AS customer
-			   FROM ${T("documents")} d JOIN ${T("customers")} c ON c.id = d.customer_id
+			   FROM ${T("documents")} d JOIN ${CUSTOMERS} c ON c.id = d.customer_id
 			  WHERE (d.kind = 'invoice' AND d.status = 'open' AND d.sent_at IS NULL)
 			     OR (d.kind <> 'invoice' AND d.status = 'sent')
 			  ORDER BY d.due_date, d.id
@@ -55,8 +56,20 @@ export function dashboardSync(ctx, h) {
 				link: openLink("payments"),
 			});
 		}
+		// Customers from before 0.7.0 wait for a person to approve moving them
+		// into Ledger's shared list of customers and vendors.
+		const unmoved = await q(`SELECT count(*)::int AS n FROM ${T("customers")} WHERE entity_id IS NULL`);
+		const m = unmoved.rows[0]?.n ?? 0;
+		if (m > 0) {
+			todos.set("customers-move", {
+				title: `Move ${m} Sales customer${m === 1 ? "" : "s"} into Ledger's customer list`,
+				body: "Ledger now keeps customers and vendors in one list shared by every module. Review the move; nothing changes until you approve it.",
+				due: null,
+				link: openLink("customers/move"),
+			});
+		}
 		// Customer lists from Ledger's migration wait for someone to choose who to add.
-		const lists = (ctx.files ? await ctx.files.inbox({ kind: "customer", limit: 50 }) : []).filter((f) => f.status === "new" || f.status === "accepted");
+		const lists = (await customerLists(ctx)).filter((f) => f.status === "new" || f.status === "accepted");
 		if (lists.length > 0) {
 			const f = lists[0];
 			todos.set("customer-imports", {
@@ -72,7 +85,7 @@ export function dashboardSync(ctx, h) {
 	async function syncOverdue() {
 		const { rows } = await q(
 			`SELECT d.number, d.currency, d.total_cents - d.paid_cents AS due_cents, d.due_date::text, c.name AS customer
-			   FROM ${T("documents")} d JOIN ${T("customers")} c ON c.id = d.customer_id
+			   FROM ${T("documents")} d JOIN ${CUSTOMERS} c ON c.id = d.customer_id
 			  WHERE d.kind = 'invoice' AND d.status = 'open' AND d.due_date < $1::date
 			  ORDER BY d.due_date, d.id`,
 			[today()],
@@ -109,7 +122,7 @@ export function dashboardSync(ctx, h) {
 		// A to-do whose document moved on (emailed, decided, deleted) is done.
 		for (const i of existing) {
 			if (wanted.has(i.key) || i.closed_at) continue;
-			if (/^(send|follow-up)-\d+$/.test(i.key) || i.key === "payment-suggestions" || i.key === "customer-imports") await d.complete(i.key);
+			if (/^(send|follow-up)-\d+$/.test(i.key) || i.key === "payment-suggestions" || i.key === "customer-imports" || i.key === "customers-move") await d.complete(i.key);
 		}
 	}
 

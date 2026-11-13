@@ -17,6 +17,12 @@ in Ledger's sidebar as **Sales**, with a hammer icon, and lets you:
 - **sort sales into categories** (Labour, Materials, …), each tracking to
   a revenue account. The Categories page shows sales per category over any
   date range.
+- **share customers with the rest of Ledger**: customers live in Ledger's
+  list of customers and vendors (Entities in the sidebar), the same one
+  Ledger and every other module use. A customer added there can be invoiced
+  in Sales straight away; one added in Sales shows up there. Sales keeps its
+  own extras (company, Cc addresses, tax number, currency, payment terms,
+  taxes), and the entries it posts say which customer they're with.
 - **keep customer records**: contact details, billing address, Cc addresses,
   currency, payment terms, taxes, notes, balance owing and every document
   sent to them
@@ -72,7 +78,7 @@ side pane.
 
 ## Install
 
-Needs **Ledger 0.13.2 or newer** (Import from CSV, customer lists from Ledger's migration,
+Needs **Ledger 0.16.0 or newer** (the shared customer list, sub-accounts, Import from CSV, customer lists from Ledger's migration,
 "+ New account…", journal entry links, settings per organization, plus the
 settings form, Gmail, search and user roles from earlier versions). In
 Ledger, open **Settings → Modules**, enter `mastifdogo/sales_module` and add it.
@@ -98,6 +104,14 @@ businesses, invoice separately. Each organization's admins fill in
 
 ### Changes
 
+- **0.7.0**: customers live in Ledger's shared list of customers and
+  vendors (Ledger 0.16.0). After upgrading, the Customers tab (and a
+  dashboard to-do) shows the customers kept only in Sales and what moving
+  each would do: join the entry with the same name, or be added. Nothing
+  moves until you approve it. Customer names are now unique, as they are in
+  Ledger's list. Entries record their customer, sub-accounts show indented
+  in account dropdowns, and lists of kind `entity` are accepted. Needs
+  Ledger 0.16.0.
 - **0.6.0**: import customers from a CSV file (Settings → Sales; Ledger's
   Import from CSV). Needs Ledger 0.13.2.
 - **0.5.0**: customer lists from Ledger's migration, reviewed before

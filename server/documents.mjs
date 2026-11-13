@@ -31,7 +31,7 @@ const COLUMN_TYPES = {
 const OPEN_QUOTE = ["draft", "sent"];
 
 export function documentRoutes(ctx, h, mail) {
-	const { T, q, bad, notFound, conflict, body, text, dateField, currency, decimal, id, isId, idList, like, loadSettings } = h;
+	const { T, q, bad, notFound, conflict, body, text, dateField, currency, decimal, id, isId, idList, like, loadSettings, CUSTOMERS } = h;
 
 	const byId = (rows) => new Map(rows.map((r) => [String(r.id), r]));
 	const loadTaxes = async () => byId((await q(`SELECT * FROM ${T("taxes")}`)).rows);
@@ -44,7 +44,7 @@ export function documentRoutes(ctx, h, mail) {
 	async function documentInput(kind, o, s, existing) {
 		const customerId = o.customer_id ?? existing?.customer_id;
 		if (!isId(customerId)) throw bad("customer_id is required");
-		const { rows } = await q(`SELECT id, currency, terms_days, tax_ids, archived FROM ${T("customers")} WHERE id = $1`, [String(customerId)]);
+		const { rows } = await q(`SELECT id, currency, terms_days, tax_ids, archived FROM ${CUSTOMERS} x WHERE id = $1`, [String(customerId)]);
 		const cust = rows[0];
 		if (!cust) throw bad("customer_id: there is no such customer");
 		if (cust.archived && String(existing?.customer_id) !== String(cust.id)) throw bad("customer_id: this customer is archived");
@@ -153,10 +153,11 @@ export function documentRoutes(ctx, h, mail) {
 		const { rows } = await q(
 			`SELECT d.*, d.issue_date::text, d.due_date::text,
 			        jsonb_build_object('id', c.id, 'name', c.name, 'company', c.company, 'email', c.email, 'cc_emails', c.cc_emails,
-			                           'address', c.address, 'tax_id', c.tax_id, 'phone', c.phone) AS customer,
+			                           'address', c.address, 'tax_id', c.tax_id, 'phone', c.phone,
+			                           'entity_id', c.entity_id, 'entity_active', c.entity_active) AS customer,
 			        (SELECT jsonb_build_object('id', s.id, 'kind', s.kind, 'number', s.number) FROM ${T("documents")} s WHERE s.id = d.source_id) AS source,
 			        (SELECT jsonb_build_object('id', v.id, 'kind', v.kind, 'number', v.number) FROM ${T("documents")} v WHERE v.id = d.converted_id) AS converted
-			   FROM ${T("documents")} d JOIN ${T("customers")} c ON c.id = d.customer_id
+			   FROM ${T("documents")} d JOIN ${CUSTOMERS} c ON c.id = d.customer_id
 			  WHERE d.id = $1`,
 			[did],
 		);
@@ -249,6 +250,9 @@ export function documentRoutes(ctx, h, mail) {
 		href: openLink(`invoices/${doc.id}`),
 	});
 
+	/** Who an entry is with, for Ledger (≥ 0.16.0): the customer's entity, when it has an active one. */
+	const entityOf = (doc) => (doc.customer?.entity_id != null && doc.customer.entity_active ? { entity_id: Number(doc.customer.entity_id) } : {});
+
 	/** Links an entry that already exists (a reversal, a matched deposit); a failure here never undoes the work. */
 	async function linkEntry(entryId, link, user) {
 		try {
@@ -279,6 +283,7 @@ export function documentRoutes(ctx, h, mail) {
 						reference: doc.number.slice(0, 100),
 						lines: await postingLines(doc, totals, s),
 						links: [invoiceLink(doc)],
+						...entityOf(doc),
 					},
 					user,
 				);
@@ -360,7 +365,7 @@ export function documentRoutes(ctx, h, mail) {
 		if (lines) {
 			try {
 				const entry = await ctx.ledger.createJournalEntry(
-					{ entry_date: date, description: `${memo} – ${before.customer.name}`.slice(0, 500), reference: (reference || before.number).slice(0, 100), lines, links: [invoiceLink(before, "Payment on invoice")] },
+					{ entry_date: date, description: `${memo} – ${before.customer.name}`.slice(0, 500), reference: (reference || before.number).slice(0, 100), lines, links: [invoiceLink(before, "Payment on invoice")], ...entityOf(before) },
 					user,
 				);
 				await q(`UPDATE ${T("payments")} SET journal_entry_id = $2 WHERE id = $1`, [pid, String(entry.id)]);
@@ -470,7 +475,7 @@ ${paras}
 			const { rows } = await q(
 				`SELECT d.id, d.kind, d.number, d.status, d.issue_date::text, d.due_date::text, d.currency, d.total_cents, d.paid_cents,
 				        d.sent_at, d.customer_id, c.name AS customer_name, c.company AS customer_company
-				   FROM ${T("documents")} d JOIN ${T("customers")} c ON c.id = d.customer_id
+				   FROM ${T("documents")} d JOIN ${CUSTOMERS} c ON c.id = d.customer_id
 				  WHERE d.kind = $5 AND ${where}
 				    AND ($1 = '' OR d.number ILIKE $2 OR c.name ILIKE $2 OR c.company ILIKE $2 OR d.po_number ILIKE $2)
 				    AND ($3 = '' OR d.customer_id = nullif($3, '')::bigint)
@@ -692,7 +697,7 @@ ${paras}
 			if (claimed.rowCount === 0) throw conflict("it changed meanwhile; reload and try again");
 			try {
 				const s = await loadSettings();
-				const { rows } = await q(`SELECT terms_days FROM ${T("customers")} WHERE id = $1`, [src.customer_id]);
+				const { rows } = await q(`SELECT terms_days FROM ${CUSTOMERS} x WHERE id = $1`, [src.customer_id]);
 				const issue = today();
 				const cols = {
 					customer_id: String(src.customer_id),

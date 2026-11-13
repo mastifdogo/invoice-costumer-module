@@ -2,9 +2,19 @@
 
 import { today } from "../lib/money.mjs";
 import { isEmail, parseAddressList } from "../lib/mail.mjs";
+import { customerStore } from "./customer-store.mjs";
 
 export function customerRoutes(ctx, h) {
-	const { T, q, bad, notFound, conflict, body, text, intIn, bool, currency, id, like, loadSettings, checkTaxIds } = h;
+	const { T, q, bad, notFound, conflict, body, text, intIn, bool, currency, id, like, loadSettings, checkTaxIds, CUSTOMERS } = h;
+	const store = customerStore(ctx, h);
+
+	/** The form's fields split into what's shared in Ledger's list and what's Sales' own. */
+	const split = (c) => {
+		const contact = {};
+		const own = {};
+		for (const [k, v] of Object.entries(c)) (store.CONTACT.includes(k) ? contact : own)[k] = v;
+		return { contact, own };
+	};
 
 	async function customerInput(o, partial) {
 		const out = {};
@@ -38,18 +48,19 @@ export function customerRoutes(ctx, h) {
 		         WHERE customer_id = ${alias}.id AND kind = 'invoice' AND status = 'open' GROUP BY currency) x) AS outstanding`;
 
 	async function getCustomer(cid) {
-		const { rows } = await q(`SELECT c.*, ${OUTSTANDING("c")} FROM ${T("customers")} c WHERE c.id = $1`, [cid]);
+		const { rows } = await q(`SELECT c.*, ${OUTSTANDING("c")} FROM ${CUSTOMERS} c WHERE c.id = $1`, [cid]);
 		if (!rows[0]) throw notFound("customer");
 		return rows[0];
 	}
 
 	ctx.route("GET", "/customers", async (req) => {
+		await store.adopt();
 		const search = (req.query.get("q") ?? "").trim();
 		const archived = req.query.get("archived") === "1";
 		const { rows } = await q(
 			`SELECT c.*, ${OUTSTANDING("c")},
 			        (SELECT count(*) FROM ${T("documents")} d WHERE d.customer_id = c.id AND d.kind = 'invoice' AND d.status <> 'draft') AS invoice_count
-			   FROM ${T("customers")} c
+			   FROM ${CUSTOMERS} c
 			  WHERE ($1 = '' OR c.name ILIKE $2 OR c.company ILIKE $2 OR c.email ILIKE $2)
 			    AND ($3 OR NOT c.archived)
 			  ORDER BY c.archived, lower(c.name), c.id
@@ -60,15 +71,23 @@ export function customerRoutes(ctx, h) {
 	});
 
 	ctx.route("POST", "/customers", async (req) => {
-		const s = await loadSettings();
-		const c = await customerInput(body(req), false);
-		c.currency ??= s.default_currency;
-		const cols = Object.keys(c);
-		const { rows } = await q(
-			`INSERT INTO ${T("customers")} (${cols.join(", ")}) VALUES (${cols.map((_, i) => `$${i + 1}`).join(", ")}) RETURNING id`,
-			Object.values(c),
-		);
-		return ctx.response(201, await getCustomer(rows[0].id));
+		const { contact, own } = split(await customerInput(body(req), false));
+		const cid = await store.add(contact, own);
+		return ctx.response(201, await getCustomer(cid));
+	});
+
+	// Customers kept only in Sales (from before 0.7.0) and what moving them
+	// into Ledger's shared list would do; the move runs only when a person
+	// approves it.
+	ctx.route("GET", "/customers/move", async () => {
+		const rows = await store.movePlan();
+		return { pending: rows.length, data: rows };
+	});
+
+	ctx.route("POST", "/customers/move", async (req) => {
+		const plan = await store.movePlan();
+		if (plan.length === 0) throw conflict("every customer is already in Ledger's list");
+		return store.move(req.user);
 	});
 
 	ctx.route("GET", "/customers/:id", async (req) => {
@@ -92,15 +111,8 @@ export function customerRoutes(ctx, h) {
 
 	ctx.route("PUT", "/customers/:id", async (req) => {
 		const cid = id(req, "id", "customer");
-		const c = await customerInput(body(req), true);
-		const cols = Object.keys(c);
-		if (cols.length) {
-			const { rowCount } = await q(
-				`UPDATE ${T("customers")} SET ${cols.map((k, i) => `${k} = $${i + 2}`).join(", ")}, updated_at = now() WHERE id = $1`,
-				[cid, ...Object.values(c)],
-			);
-			if (rowCount === 0) throw notFound("customer");
-		}
+		const { contact, own } = split(await customerInput(body(req), true));
+		if (!(await store.update(cid, contact, own))) throw notFound("customer");
 		return getCustomer(cid);
 	});
 
@@ -111,4 +123,6 @@ export function customerRoutes(ctx, h) {
 		const { rowCount } = await q(`DELETE FROM ${T("customers")} WHERE id = $1`, [cid]);
 		if (rowCount === 0) throw notFound("customer");
 	});
+
+	return store;
 }

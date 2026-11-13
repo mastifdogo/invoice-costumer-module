@@ -93,7 +93,24 @@ payments to the books.
   `move-settings`, `common`); `lib/` has `money.mjs`, `pdf.mjs` (PDF
   generation, no dependencies) and `mail.mjs` (its own SMTP client). Tests:
   `test/*.test.mjs` (`npm test`).
-- Needs Ledger ≥ 0.13.2. Import from CSV: `csvImport()` in
+- Needs Ledger ≥ 0.16.0. Customers live in Ledger's shared entities:
+  `server/customer-store.mjs` adds, updates, adopts and moves them.
+  `customers.entity_id` points at the entity, which holds name, email,
+  phone, address and notes; Sales' row keeps company, cc_emails, tax_id,
+  currency, terms_days, tax_ids and archived. Read customers through
+  `h.CUSTOMERS` (a derived table joining `public.entities`, read-only),
+  never `T("customers")` alone; write contact details with
+  `ctx.entities`. Rows from before 0.7.0 (`entity_id` NULL, also what the
+  QuickBooks converter writes) keep their own details until a person
+  approves the move (`/customers/move`, to-do `customers-move`). `adopt()`
+  gives customer entities added elsewhere a Sales row. Entries carry
+  `entity_id` when the entity is active (`entityOf()` in `documents.mjs`).
+  Customer names are unique, as in Ledger's list.
+- Account dropdowns show sub-accounts under their parent (`accountTree()`
+  in `ui/app.js`, Ledger ≥ 0.15.0).
+- A restore (Ledger ≥ 0.14.0) replaces Sales' tables and Ledger's entities
+  together; Sales keeps nothing in memory that must match them.
+- Import from CSV: `csvImport()` in
   `server/imports.mjs` calls `ctx.imports.provide` with the customer fields;
   the dry run reports bad rows as `errors` (they block the import) and skips
   names or emails already in Sales, or repeated, saying so in `summary`. The

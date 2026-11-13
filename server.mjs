@@ -30,11 +30,11 @@ export default async function register(ctx) {
 	const mail = mailHelpers(routes, h);
 	settingsRoutes(routes, h, mail);
 	catalogRoutes(routes, h);
-	customerRoutes(routes, h);
+	const customers = customerRoutes(routes, h);
 	const docs = documentRoutes(routes, h, mail);
 	paymentRoutes(routes, h, docs);
-	importRoutes(routes, h, dashboard);
-	csvImport(ctx, h);
+	importRoutes(routes, h, dashboard, customers);
+	csvImport(ctx, h, customers);
 	searchProvider(ctx, h);
 	// Startup runs in the main books; each organization has its own documents
 	// and (Ledger ≥ 0.11.1) its own settings, so visit each one.
